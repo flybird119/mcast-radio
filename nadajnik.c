@@ -43,46 +43,113 @@ struct event *ctrl_evt;
 struct event *rtime_evt;
 
 /* transmitter state */
-struct proto_header pending_ret[MAX_PENDING_RET]; // TODO save also receipent
-int pending_retsz;
+ssize_t last_seqno = 0;
+
+/* retransmit requests */
+struct retransmit_request {
+	ssize_t seqno;
+	struct sockaddr_in addr;
+};
+struct retransmit_request retransmit_lst[MAX_PENDING_RET];
+int retransmit_lst_cap = sizeof(retransmit_lst);
+int retransmit_lst_end = 0; /* next to last index */
+
+/* buffered packets */
+char *packets_buf = NULL;
+int packets_buf_cap = 0; /* highest available index */
+int packets_buf_begin = 0; /* first byte index */
+int packets_buf_end = 0; /* next to last byte index */
+int packet_sz = 0; /* bytes */
+
+char * packets_buf_get(const ssize_t seqno) {
+	struct proto_header *header =
+		(struct proto_header *) (packets_buf + packets_buf_begin * packet_sz);
+	int index = seqno - header->seqno;
+	if (index < 0)
+		return NULL;
+	index = (packets_buf_begin + index) % packets_buf_cap;
+	header = (struct proto_header *) (packets_buf + index * packet_sz);
+	if (seqno != header->seqno)
+		return NULL;
+	return (char *) header;
+}
+
+struct proto_pack * packets_buf_back() {
+	return (struct proto_pack *) (packets_buf + packets_buf_end * packet_sz);
+}
+
+void packets_buf_next() {
+	++packets_buf_end;
+	if (packets_buf_end == packets_buf_begin) {
+		/* won't fire first time, when buffer size is 1 */
+		++packets_buf_begin;
+		packets_buf_begin %= packets_buf_cap;
+	}
+	packets_buf_end %= packets_buf_cap;
+}
 
 /* callbacks (should be treated like ISRs) */
 void stdin_cb(evutil_socket_t sock, short ev, void *arg) {
-	static char buff[PSIZE];
-	static ssize_t len, r;
+	static ssize_t len = 0, r = 0;
 
-	TRY_ZERO(r = read(sock, buff + len, sizeof(buff) - len));
+	struct proto_pack *packet = packets_buf_back();
+	struct proto_header *header = &packet->header;
+
+	TRY_ZERO(r = read(sock, packet->data + len, psize - len));
 	if (r) {
 		len += r;
-		if (len == sizeof(buff)) {
-			// TODO push
+		if (len == psize) {
+			/* packet is full, init */
+			header->seqno = last_seqno++;
+			header->len = len;
+			header->flags = 0;
+			ASSERT(psize + sizeof(struct proto_header) == packet_sz);
+			/* send */
+			fprintf(stderr, "write %d\n", len);
+			write(mcast_sock, packet, packet_sz); /* must this size */
+			/* start new packet */
+			len = 0;
+			packets_buf_next();
 		}
-	} else {
-		// TODO push
-		// TODO end of input file
+	} else if (len) {
+		/* end of input, init packet as is */
+		header->seqno = last_seqno++;
+		header->len = len;
+		header->flags = 0;
+		/* send */
+		fprintf(stderr, "write %d\n", len);
+		TRY_ZERO(write(mcast_sock, packet, len + sizeof(struct proto_header)));
+		/* everything sent */
+		len = 0;
+		/* end of input file, exit */
 		event_base_loopexit(base, NULL);
 	}
 }
 
 void ctrl_cb(evutil_socket_t sock, short ev, void *arg) {
-	struct proto_header *packet = pending_ret + pending_retsz; /* no-copy */
-
+	struct proto_header header;
 	ssize_t r;
-	struct sockaddr_in addr;
-	socklen_t addr_len = sizeof(addr);
-	TRY_ZERO(r = recvfrom(sock, packet, sizeof(*packet), 0,
-				(struct sockaddr *) &addr, &addr_len));
-	if (r == sizeof(*packet)) {
-		if (PROTO_RET & packet->flags) {
-			pending_retsz++; /* everything in the right place */
-			pending_retsz %= sizeof(pending_ret);
-			/* NOTE: if we're losing many packets the oldest requests get overriden,
-			 * many means more than MAX_PENDING_RET during RTIME ms */
+	struct retransmit_request *req = retransmit_lst + retransmit_lst_end; /* no-copy */
+	socklen_t addr_len = sizeof(req->addr);
+
+	TRY_ZERO(r = recvfrom(sock, &header, sizeof(header), 0,
+				(struct sockaddr *) &req->addr, &addr_len));
+	if (r == sizeof(header)) {
+		if (PROTO_RET & header.flags) {
+			if (retransmit_lst_end < retransmit_lst_cap - 1) {
+				req->seqno = header.seqno;
+				/* req->addr is already set */
+				retransmit_lst_end++;
+			}
+			/* NOTE: if we get too many retransmission requests, we drop the newest,
+			 * there's no posiibility to serve too many requests and keep our 
+			 * streaming "real-time" eitherway */
 		}
-		if (PROTO_IDQ & packet->flags) {
-			/* NOTE: we don't want to fail here */
+		/* whatever we've done req->addr is still valid */
+		if (PROTO_IDQ & header.flags) {
+			/* NOTE: we don't want to fail here actually */
 			if (sendto(sock, &my_ident, sizeof(my_ident), 0,
-					(struct sockaddr *) &addr, addr_len) != sizeof(my_ident))
+						(struct sockaddr *) &req->addr, addr_len) != sizeof(my_ident))
 				fprintf(stderr, "Sending ID response failed.\n");
 		}
 	}
@@ -90,52 +157,60 @@ void ctrl_cb(evutil_socket_t sock, short ev, void *arg) {
 }
 
 void do_retr_cb(evutil_socket_t sock, short ev, void *arg) {
-	for (; pending_retsz > 0; --pending_retsz) {
+	for (int i = 0; i < retransmit_lst_end; ++i) {
+		fprintf(stderr, "ret %d\n", retransmit_lst[i].seqno);
 		// TODO
 	}
+	retransmit_lst_end = 0;
 }
+
 
 int main(int argc, char **argv) {
 	/* parse options */
-		int errflg = 0;
-		extern char *optarg;
-		extern int optind, optopt;
-		int c;
-		while ((c = getopt(argc, argv, "a:P:C:p:f:R:n:")) != -1) {
-			switch(c) {
-				case 'a':
-					strncpy(mcast_dotted, optarg, sizeof(mcast_dotted));
-					break;
-				case 'P':
-					data_port = (in_port_t) atoi(optarg);
-					break;
-				case 'C':
-					ctrl_port = (in_port_t) atoi(optarg);
-					break;
-				case 'p':
-					psize = atoi(optarg);
-					break;
-				case 'f':
-					fsize = atoi(optarg);
-					break;
-				case 'R':
-					rtime = atoi(optarg);
-					break;
-				case 'n':
-					strncpy(name, optarg, sizeof(name));
-					break;
-				default:
-					errflg++;
-					break;
-			}
+	int errflg = 0;
+	extern char *optarg;
+	extern int optind, optopt;
+	int c;
+	while ((c = getopt(argc, argv, "a:P:C:p:f:R:n:")) != -1) {
+		switch(c) {
+			case 'a':
+				strncpy(mcast_dotted, optarg, sizeof(mcast_dotted));
+				break;
+			case 'P':
+				data_port = (in_port_t) atoi(optarg);
+				break;
+			case 'C':
+				ctrl_port = (in_port_t) atoi(optarg);
+				break;
+			case 'p':
+				psize = atoi(optarg);
+				break;
+			case 'f':
+				fsize = atoi(optarg);
+				break;
+			case 'R':
+				rtime = atoi(optarg);
+				break;
+			case 'n':
+				strncpy(name, optarg, sizeof(name));
+				break;
+			default:
+				errflg++;
+				break;
 		}
-		if (strlen(mcast_dotted) == 0)
-			errflg++;
+	}
+	if (strlen(mcast_dotted) == 0)
+		errflg++;
 
-		if (errflg) {
-			fprintf(stderr, "Usage: %s ... \n", argv[0]); // TODO
-			exit(EXIT_FAILURE);
-		}
+	if (errflg) {
+		fprintf(stderr, "Usage: %s ... \n", argv[0]); // TODO
+		exit(EXIT_FAILURE);
+	}
+
+	/* initialize packets buffer */
+	packets_buf_cap = fsize / psize; // TODO or ceil
+	packet_sz = sizeof(struct proto_header) + psize;
+	packets_buf = (char *) malloc(packets_buf_cap * packet_sz);
 
 	/* setup ctrl socket */
 	local_addr.sin_family = AF_INET;

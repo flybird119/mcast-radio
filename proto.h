@@ -3,9 +3,18 @@
 
 #include <netinet/in.h>
 
-#include "proto.h"
 
-#define PROTO_MAXSIZE 64 * (1<<10)
+#define ADDR_LEN 32
+#define NAME_LEN 32
+#define ALBUMNO 305678
+#define DISCOVER_ADDR "255.255.255.255"
+#define DATA_PORT 20000 + (ALBUMNO % 10000)
+#define CTRL_PORT 30000 + (ALBUMNO % 10000)
+#define UI_PORT 10000 + (ALBUMNO % 10000)
+#define PSIZE 512
+#define BSIZE 64 * (1<<10)
+#define FSIZE 128 * (1<<10)
+#define RTIME 250
 
 #define PROTO_RET 0x1
 #define PROTO_IDQ 0x2
@@ -25,9 +34,9 @@ struct proto_ident {
 	char tune_name[NAME_LEN];
 };
 
-struct proto_big {
+struct proto_pack {
 	struct proto_header header;
-	char data[PROTO_MAXSIZE];
+	char data[0];
 };
 
 #endif /* __PROTO_H */
