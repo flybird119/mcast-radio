@@ -76,14 +76,14 @@ int main(int argc, char **argv) {
 	TRY_TRUE(sockaddr_dotted(&discover_addr, discover_dotted, ctrl_port) == 1);
 
 	/* setup sockets */
-	TRY_ZERO(discover_sock = socket(PF_INET, SOCK_DGRAM, 0));
+	TRY_SYS(discover_sock = socket(PF_INET, SOCK_DGRAM, 0));
 	{
 		int optval = 1;
-		TRY_ZERO(setsockopt(discover_sock, SOL_SOCKET, SO_BROADCAST,
+		TRY_SYS(setsockopt(discover_sock, SOL_SOCKET, SO_BROADCAST,
 					(void*) &optval, sizeof(optval)));
 	}
-	TRY_ZERO(bind(discover_sock, (struct sockaddr *) &local_addr, sizeof(local_addr)));
-	TRY_ZERO(connect(discover_sock, (struct sockaddr *) &discover_addr,
+	TRY_SYS(bind(discover_sock, (struct sockaddr *) &local_addr, sizeof(local_addr)));
+	TRY_SYS(connect(discover_sock, (struct sockaddr *) &discover_addr,
 				sizeof(discover_addr)));
 
 	write(discover_sock, "bbb", 3);
