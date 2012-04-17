@@ -91,7 +91,7 @@ void packets_buf_next() {
 	packets_buf_end %= packets_buf_cap;
 }
 
-/* callbacks (should be treated like ISRs) */
+/* callbacks */
 void stdin_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 	UNUSED(arg);
@@ -199,7 +199,7 @@ int main(int argc, char **argv) {
 	while ((c = getopt(argc, argv, "a:P:C:p:f:R:n:")) != -1) {
 		switch(c) {
 			case 'a':
-				strncpy(mcast_dotted, optarg, sizeof(mcast_dotted));
+				strncpy(mcast_dotted, optarg, sizeof(mcast_dotted) - 1);
 				if (strlen(mcast_dotted) == 0)
 					errflg++;
 				break;
@@ -225,7 +225,7 @@ int main(int argc, char **argv) {
 					errflg++;
 				break;
 			case 'n':
-				strncpy(name, optarg, sizeof(name));
+				strncpy(name, optarg, sizeof(name) - 1);
 				break;
 			default:
 				errflg++;
@@ -264,8 +264,8 @@ int main(int argc, char **argv) {
 	/* better to keep such things precomputed due to no-copy policy */
 	init_header(pack_my_ident.header, 0, data_len(pack_my_ident), PROTO_IDRESP);
 	memcpy(&pack_my_ident.mcast_addr, &mcast_addr, sizeof(pack_my_ident.mcast_addr));
-	strncpy(pack_my_ident.app_name, argv[0], sizeof(pack_my_ident.app_name));
-	strncpy(pack_my_ident.tune_name, name, sizeof(pack_my_ident.tune_name));
+	strncpy(pack_my_ident.app_name, argv[0], sizeof(pack_my_ident.app_name) - 1);
+	strncpy(pack_my_ident.tune_name, name, sizeof(pack_my_ident.tune_name) - 1);
 
 	init_header(pack_ret_failed.header, 0, 0, PROTO_FAIL);
 
@@ -280,7 +280,7 @@ int main(int argc, char **argv) {
 	TRY_SYS(event_add(ctrl_evt, NULL));
 
 	TRY_TRUE(rtime_evt = event_new(base, -1, EV_TIMEOUT|EV_PERSIST, do_retr_cb, NULL));
-	struct timeval rtime_tv = {0, 1000*rtime};
+	struct timeval rtime_tv = {(rtime / 1000), 1000*(rtime % 1000)};
 	TRY_SYS(event_add(rtime_evt, &rtime_tv));
 
 	/* dispatcher loop */
@@ -288,6 +288,9 @@ int main(int argc, char **argv) {
 
 	/* clean exit */
 	event_free(stdin_evt);
+	event_free(ctrl_evt);
+	event_free(rtime_evt);
+
 	event_base_free(base);
 	close(mcast_sock);
 
