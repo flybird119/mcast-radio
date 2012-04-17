@@ -10,12 +10,15 @@
 #include <netinet/in.h>
 
 #include <event2/event.h>
+#include <event2/listener.h>
 
 #include "err.h"
 #include "common.h"
 #include "proto.h"
 
 #define STATIONS_MAX 32
+#define UI_CLIENTS_MAX 32
+#define NO_SOCK -1
 
 #define DISCOVER_BURST_NUM 6
 #define DISCOVER_BURST_TIMEOUT 500
@@ -34,6 +37,7 @@ char tune_name[NAME_LEN] = "";
 /* sockets */
 struct sockaddr_in local_addr;
 struct sockaddr_in discover_addr;
+struct sockaddr_in ui_addr;
 
 int discover_sock;
 
@@ -43,6 +47,9 @@ struct event_base *base;
 struct event *rtime_evt;
 struct event *discover_timeout_evt;
 struct event *discover_recv_evt;
+struct event *refresh_ui_evt;
+
+struct evconnlistener *ui_listener;
 
 /* receiver state */
 int discovery_burst = DISCOVER_BURST_NUM;
@@ -50,14 +57,67 @@ int discovery_burst = DISCOVER_BURST_NUM;
 /* received data buffer */
 
 /* stations */
-struct station {
+struct station_desc {
+	char expiry_ticks;
 	struct sockaddr_in mcast_addr;
-	tune_name[NAME_LEN];
+	char tune_name[NAME_LEN];
 };
-struct station stations[STATIONS_MAX];
-int stations_cap = sizeof(stations);
-int stations_end = 0;
-int stations_cur = 0;
+struct station_desc stations[STATIONS_MAX];
+int stations_cap = SIZEOF(stations);
+int stations_curr = 0;
+
+struct station_desc* stations_free_slot() {
+	int i;
+	for (i = 0; i < stations_cap; ++i)
+		if (stations[i].expiry_ticks == 0)
+			break;
+	if (i < stations_cap)
+		return (stations + i);
+	else
+		return NULL;
+}
+
+void switch_station(int new_st) {
+	stations_curr = new_st;
+	// TODO
+	// reinit buffers
+	// change mcast
+
+	// TODO what to do with retransmission packets from previous station?
+}
+
+void next_station() {
+	int i = stations_curr;
+	do {
+		i = (i+1) % stations_cap;
+	} while (i != stations_curr);
+	switch_station((i == stations_curr) ? 0 : i);
+}
+
+void prev_station() {
+	int i = stations_curr;
+	do {
+		--i;
+		if (i < 0)
+			i = stations_cap - 1;
+	} while (i != stations_curr);
+	switch_station((i == stations_curr) ? 0 : i);
+}
+
+/* ui clients */
+int ui_clients_socks[UI_CLIENTS_MAX]; /* must be initialized */
+int ui_clients_socks_cap = SIZEOF(ui_clients_socks);
+
+int *ui_clients_free_slot() {
+	int i;
+	for (i = 0; i < ui_clients_socks_cap; ++i)
+		if (ui_clients_socks[i] == NO_SOCK)
+			break;
+	if (i < ui_clients_socks_cap)
+		return (ui_clients_socks + i);
+	else
+		return NULL;
+}
 
 /* callbacks */
 void data_recv_cb(evutil_socket_t sock, short ev, void *arg) {
@@ -104,7 +164,26 @@ void discover_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 			TRY_SYS(event_add(discover_timeout_evt, &dtime_tv));
 		}
 	}
-	// TODO decrement stations markers and remove if void
+
+	int r = 0;
+	/* remove expired stations */
+	int i;
+	for (i = 0; i < stations_cap; ++i) {
+		if (stations[i].expiry_ticks > 0) {
+			stations[i].expiry_ticks--;
+			if (stations[i].expiry_ticks == 0)
+				r++;
+		}
+	}
+	/* if current station disappears */
+	if (stations[stations_curr].expiry_ticks == 0) {
+		next_station();
+		r++;
+	}
+
+	/* refresh */
+	if (r)
+		event_active(refresh_ui_evt, 0, 0);
 }
 
 void discover_recv_cb(evutil_socket_t sock, short ev, void *arg) {
@@ -116,31 +195,125 @@ void discover_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	TRY_SYS(r = read(sock, &packet, sizeof(packet)));
 	if (r == sizeof(packet)) {
 		if (PROTO_IDRESP & packet.header.flags) {
-			// TODO check if already exists
-			// TODO mark if so
-			// TODO add if not
-			if (stations_end < stations_cap) {
-				struct station *st = stations[stations_end];
-				memcpy(&st->mcast_addr, &packet.mcast_addr, sizeof(st->mcast_addr));
-				strncpy(st->tune_name, packet->tune_name, sizeof(st->tune_name) - 1);
-				// check if we're waiting for it (and switch if so)
-				ASSERT(sizeof(tune_name) == sizeof(st->tune_name));
-				ASSERT(tune_name[sizeof(tune_name) - 1] == 0);
-				if (strcmp(st->tune_name, tune_name) == 0) {
-					stations_curr = stations_end;
+			/* check if already exists */
+			int i;
+			for (i = 0; i < stations_cap; ++i)
+				if (stations[i].expiry_ticks &&
+						(strcmp(stations[i].tune_name, packet.tune_name) == 0))
+					break;
+			if (i < stations_cap) {
+				/* reset station */
+				stations[i].expiry_ticks = DISCOVER_KICK_THRESH;
+			} else {
+				/* add new station */
+				struct station_desc *st = stations_free_slot();
+				/* if found free slot */
+				if (st) {
+					st->expiry_ticks = DISCOVER_KICK_THRESH;
+					memcpy(&st->mcast_addr, &packet.mcast_addr, sizeof(st->mcast_addr));
+					strncpy(st->tune_name, packet.tune_name, sizeof(st->tune_name) - 1);
+
+					/* check if we're waiting for it (and switch if so) */
+					ASSERT(sizeof(tune_name) == sizeof(st->tune_name));
+					ASSERT(tune_name[sizeof(tune_name) - 1] == 0);
+					if (strcmp(st->tune_name, tune_name) == 0)
+						stations_curr = i;
+					/* refresh if added */
+					event_active(refresh_ui_evt, 0, 0);
 				}
-				++stations_end;
 			}
 		}
 	}
 	/* else: ignore packet */
 }
 
-void ui_new_client_cb(evutil_socket_t sock, short ev, void *arg) {
+void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
+	UNUSED(sock);
 	UNUSED(ev);
 	UNUSED(arg);
 
-	// TODO
+	static char rendered_screen[8096];
+
+	// TODO clear screen
+	int n = 0;
+	n += sprintf(rendered_screen + n, "+------------------------------Znalezione stacje:------------------------------+\r\n\r\n");
+	/* print stations list */
+	for (int i = 0; i < stations_cap; ++i) {
+		if (stations[i].expiry_ticks) {
+			n += sprintf(rendered_screen + n, "%d %s %c\r\n", i+1, stations[i].tune_name, (stations_curr == i) ? '<' : ' ');
+		}
+	}
+	n += sprintf(rendered_screen + n, "+------------------------------------------------------------------------------+\r\n\r\n");
+
+	/* send to each client */
+	for (int i = 0; i < ui_clients_socks_cap; ++i) {
+		if (ui_clients_socks[i] != NO_SOCK) {
+			TRY_TRUE(write(ui_clients_socks[i], rendered_screen, n) == n);
+		}
+	}
+}
+
+void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
+	UNUSED(ev);
+	struct event *evt = arg;
+
+	int comm = 0;
+	ssize_t r;
+	TRY_SYS(r = read(sock, &comm, sizeof(comm)));
+	if (r) {
+		// TODO telnet data format?
+		if (comm == 4348699) {
+			printf("next\n");
+			next_station();
+			event_active(refresh_ui_evt, 0, 0);
+		} else if (comm == 4283163) {
+			printf("prev\n");
+			prev_station();
+			event_active(refresh_ui_evt, 0, 0);
+		}
+	} else {
+		/* end of connection */
+		event_free(evt);
+		close(sock);
+
+		/* remove from clients list */
+		for (int i = 0; i < ui_clients_socks_cap; ++i) {
+			if (ui_clients_socks[i] == sock) {
+				ui_clients_socks[i] = NO_SOCK;
+				break;
+			}
+		}
+	}
+}
+
+void ui_new_client_cb(struct evconnlistener *listener, evutil_socket_t sock,
+		struct sockaddr *addr, int addrlen, void *arg) {
+	UNUSED(listener);
+	UNUSED(addr);
+	UNUSED(addrlen);
+	UNUSED(arg);
+
+	/* put socket into clients list */
+	int *slot = ui_clients_free_slot();
+	if (slot) {
+		*slot = sock;
+	} else {
+		/* no place - close connection */
+		close(sock);
+		/* ABORT */
+		return;
+	}
+
+	/* force character mode */
+	static unsigned char mode[] = {255, 251, 1, 255, 251, 3, 255, 252, 34};
+	TRY_SYS(write(sock, mode, SIZEOF(mode)));
+	/* we might read all the crap that telnet sent us in response,
+	 * but we'll skip it in event callback eitherway */
+
+	/* create event for new connection */
+	struct event *new_evt = malloc(event_get_struct_event_size());
+	TRY_SYS(event_assign(new_evt, base, sock, EV_READ|EV_PERSIST, ui_client_action_cb, new_evt));
+	TRY_SYS(event_add(new_evt, NULL));
 }
 
 
@@ -187,12 +360,20 @@ int main(int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 
-	/* setup addresses  */
+	/* setup buffers */
+	for (int i = 0; i < ui_clients_socks_cap; ++i)
+		ui_clients_socks[i] = NO_SOCK;
+
+	/* setup addresses */
 	local_addr.sin_family = AF_INET;
-	local_addr.sin_family = htonl(INADDR_ANY);
+	local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	local_addr.sin_port = htons(0);
 
 	TRY_TRUE(sockaddr_dotted(&discover_addr, discover_dotted, ctrl_port) == 1);
+
+	ui_addr.sin_family = AF_INET;
+	ui_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	ui_addr.sin_port = htons(ui_port);
 
 	/* setup sockets */
 	TRY_SYS(discover_sock = socket(PF_INET, SOCK_DGRAM, 0));
@@ -208,7 +389,12 @@ int main(int argc, char **argv) {
 
 	/* setup events */
 	// TODO
-	
+
+	TRY_TRUE(ui_listener = evconnlistener_new_bind(base, ui_new_client_cb, NULL,
+				LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1, (struct sockaddr*) &ui_addr, sizeof(ui_addr)));
+
+	TRY_TRUE(refresh_ui_evt = event_new(base, -1, 0, refresh_ui_cb, NULL));
+
 	TRY_TRUE(discover_recv_evt = event_new(base, discover_sock,
 				EV_READ|EV_PERSIST, discover_recv_cb, NULL));
 	TRY_SYS(event_add(discover_recv_evt, NULL));
@@ -226,6 +412,9 @@ int main(int argc, char **argv) {
 	TRY_SYS(event_base_dispatch(base));
 
 	/* clean exit */
+	evconnlistener_free(ui_listener);
+	event_free(refresh_ui_evt);
+	event_free(discover_recv_evt);
 	event_free(discover_timeout_evt);
 	event_free(rtime_evt);
 

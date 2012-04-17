@@ -2,6 +2,7 @@
 #define __COMMON_H
 
 #define UNUSED(x) ((void) (x))
+#define SIZEOF(x) (sizeof(x) / sizeof(x[0]))
 
 #define ADDR_LEN 32
 #define NAME_LEN 32

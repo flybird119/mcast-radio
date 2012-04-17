@@ -52,7 +52,7 @@ struct retransmit_request {
 	struct sockaddr_in addr;
 };
 struct retransmit_request retransmit_lst[MAX_PENDING_RET];
-int retransmit_lst_cap = sizeof(retransmit_lst);
+int retransmit_lst_cap = SIZEOF(retransmit_lst);
 int retransmit_lst_end = 0; /* next to last index */
 
 /* buffered packets */
