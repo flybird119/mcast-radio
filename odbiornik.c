@@ -232,22 +232,27 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 	UNUSED(arg);
 
+	static unsigned char cls_comm[] = {0x1b, '[', '2', 'J'};
 	static char rendered_screen[8096];
 
-	// TODO clear screen
 	int n = 0;
 	n += sprintf(rendered_screen + n, "+------------------------------Znalezione stacje:------------------------------+\r\n\r\n");
 	/* print stations list */
 	for (int i = 0; i < stations_cap; ++i) {
 		if (stations[i].expiry_ticks) {
 			n += sprintf(rendered_screen + n, "%d %s %c\r\n", i+1, stations[i].tune_name, (stations_curr == i) ? '<' : ' ');
+		} else {
+			n += sprintf(rendered_screen + n, "%d \r\n", i+1);
 		}
 	}
-	n += sprintf(rendered_screen + n, "+------------------------------------------------------------------------------+\r\n\r\n");
+	n += sprintf(rendered_screen + n, "+------------------------------------------------------------------------------+\r\n");
 
 	/* send to each client */
 	for (int i = 0; i < ui_clients_socks_cap; ++i) {
 		if (ui_clients_socks[i] != NO_SOCK) {
+			/* clean screen */
+			EXPECT(write(ui_clients_socks[i], cls_comm, SIZEOF(cls_comm)) == SIZEOF(cls_comm),
+					"Clearing remote screen failed.");
 			TRY_TRUE(write(ui_clients_socks[i], rendered_screen, n) == n);
 		}
 	}
@@ -263,11 +268,9 @@ void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
 	if (r) {
 		// TODO telnet data format?
 		if (comm == 4348699) {
-			printf("next\n");
 			next_station();
 			event_active(refresh_ui_evt, 0, 0);
 		} else if (comm == 4283163) {
-			printf("prev\n");
 			prev_station();
 			event_active(refresh_ui_evt, 0, 0);
 		}
@@ -315,6 +318,9 @@ void ui_new_client_cb(struct evconnlistener *listener, evutil_socket_t sock,
 	struct event *new_evt = malloc(event_get_struct_event_size());
 	TRY_SYS(event_assign(new_evt, base, sock, EV_READ|EV_PERSIST, ui_client_action_cb, new_evt));
 	TRY_SYS(event_add(new_evt, NULL));
+
+	/* redraw interface */
+	event_active(refresh_ui_evt, 0, 0);
 }
 
 
