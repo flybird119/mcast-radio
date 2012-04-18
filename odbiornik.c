@@ -306,7 +306,8 @@ void ui_new_client_cb(struct evconnlistener *listener, evutil_socket_t sock,
 
 	/* force character mode */
 	static unsigned char mode[] = {255, 251, 1, 255, 251, 3, 255, 252, 34};
-	TRY_SYS(write(sock, mode, SIZEOF(mode)));
+	EXPECT(write(sock, mode, SIZEOF(mode)) == SIZEOF(mode),
+			"Setting character mode of remote terminal failed.");
 	/* we might read all the crap that telnet sent us in response,
 	 * but we'll skip it in event callback eitherway */
 
@@ -388,7 +389,8 @@ int main(int argc, char **argv) {
 	TRY_TRUE(base = event_base_new());
 
 	/* setup events */
-	// TODO
+	// TODO data recv
+	// TODO ctrl recv
 
 	TRY_TRUE(ui_listener = evconnlistener_new_bind(base, ui_new_client_cb, NULL,
 				LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1, (struct sockaddr*) &ui_addr, sizeof(ui_addr)));

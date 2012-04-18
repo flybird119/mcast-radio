@@ -47,13 +47,7 @@ struct event *rtime_evt;
 seqno_t last_seqno = 0;
 
 /* retransmit requests */
-struct retransmit_request {
-	ssize_t seqno;
-	struct sockaddr_in addr;
-};
-struct retransmit_request retransmit_lst[MAX_PENDING_RET];
-int retransmit_lst_cap = SIZEOF(retransmit_lst);
-int retransmit_lst_end = 0; /* next to last index */
+/* if packet in buffer needs to be retransmitted its PROTO_DORETR flag is set */
 
 /* buffered packets */
 char *packets_buf = NULL;
@@ -111,7 +105,7 @@ void stdin_cb(evutil_socket_t sock, short ev, void *arg) {
 			ASSERT(packet_sz == (int) packet_len_p(packet));
 			/* send */
 			EXPECT(write(mcast_sock, packet, packet_sz) == packet_sz,
-					"Sending streming data failed.\n");
+					"Sending streming data failed.");
 			/* start new packet */
 			len = 0;
 			packets_buf_next();
@@ -139,27 +133,26 @@ void ctrl_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	struct proto_header header;
 	ssize_t r;
-	struct retransmit_request *req = retransmit_lst + retransmit_lst_end; /* no-copy */
-	socklen_t addr_len = sizeof(req->addr);
+	struct sockaddr_in addr;
+	socklen_t addr_len = sizeof(addr);
 
 	TRY_SYS(r = recvfrom(sock, &header, sizeof(header), 0,
-				(struct sockaddr *) &req->addr, &addr_len));
+				(struct sockaddr *) &addr, &addr_len));
 	if (r == sizeof(header)) {
 		if (PROTO_RETRANSM & header.flags) {
-			if (retransmit_lst_end < retransmit_lst_cap - 1) {
-				req->seqno = header.seqno;
-				/* req->addr is already set */
-				retransmit_lst_end++;
+			/* mark packet in buffer with PROTO_DORETR flag */
+			struct proto_packet *pack = packets_buf_get(header.seqno);
+			if (pack) {
+				pack->header.flags |= PROTO_DORETR;
 			}
-			/* NOTE: if we get too many retransmission requests, we drop the newest,
-			 * there's no posiibility to serve too many requests and keep our 
-			 * streaming "real-time" eitherway */
+			/* else: ignore packet */
+			// TODO what should we do with invalid retransmission request */
 		}
 		/* whatever we've done req->addr is still valid */
 		if (PROTO_IDQUERY & header.flags) {
 			/* NOTE: we don't want to fail here actually */
 			EXPECT(sendto(sock, &pack_my_ident, sizeof(pack_my_ident), 0, (struct sockaddr *)
-					&req->addr, addr_len) == sizeof(pack_my_ident),
+					&addr, addr_len) == sizeof(pack_my_ident),
 					"Sending id response failed.");
 		}
 	}
@@ -171,22 +164,15 @@ void do_retr_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 	UNUSED(arg);
 
-	for (int i = 0; i < retransmit_lst_end; ++i) {
-		struct retransmit_request *req = retransmit_lst + i;
-		socklen_t addr_len = sizeof(req->addr);
+	for (int i = packets_buf_begin; i < packets_buf_end; i = (i+1) % packets_buf_cap) {
+		struct proto_packet *packet = (struct proto_packet*) (packets_buf + i * packet_sz);
 
-		struct proto_packet *packet = packets_buf_get(req->seqno);
-		if (packet) {
-			EXPECT(sendto(ctrl_sock, packet, packet_len_p(packet), 0, (struct sockaddr *)
-						&req->addr, addr_len) == (int) packet_len_p(packet),
-						"Sending retransmission response failed.");
-		} else {
-			EXPECT(sendto(ctrl_sock, &pack_ret_failed, sizeof(pack_ret_failed), 0,
-						(struct sockaddr *) &req->addr, addr_len) == sizeof(pack_ret_failed),
-						"Sending retransmission response failed.");
+		if (packet->header.flags & PROTO_DORETR) {
+			packet->header.flags &= ~PROTO_DORETR;
+			EXPECT(write(mcast_sock, packet, packet_sz) == packet_sz,
+					"Sending retransmission response failed.");
 		}
 	}
-	retransmit_lst_end = 0;
 }
 
 

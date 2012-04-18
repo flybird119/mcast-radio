@@ -3,14 +3,12 @@
 
 #include <netinet/in.h>
 
-typedef uint32_t seqno_t;
-typedef uint32_t len_t;
-
 #define PROTO_RETRANSM 0x1
 #define PROTO_IDQUERY 0x2
 #define PROTO_IDRESP 0x4
 #define PROTO_DATA 0x8
 #define PROTO_FAIL 0xF
+#define PROTO_DORETR 0x10
 
 #define init_header(hdr, seq, ln, fl) \
 	hdr.seqno = seq; \
@@ -33,6 +31,9 @@ typedef uint32_t len_t;
 
 #define packet_len_p(pack) \
 	(sizeof(pack->header) + pack->header.len)
+
+typedef uint32_t seqno_t;
+typedef uint32_t len_t;
 
 struct proto_header {
 	seqno_t seqno;
