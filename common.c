@@ -12,7 +12,7 @@ int sockaddr_dotted(struct sockaddr_in* sockaddr, char* dotted_addr, in_port_t p
 	return inet_aton(dotted_addr, &sockaddr->sin_addr);
 }
 
-void setup_multicast_sockopt(int sock, int ttl) {
+void setup_multicast_sockopt(int sock, int ttl, int loopback) {
 	int optval = 1;
 	/* enable multicast sending */
 	TRY_SYS(setsockopt(sock, SOL_SOCKET, SO_BROADCAST,
@@ -22,7 +22,9 @@ void setup_multicast_sockopt(int sock, int ttl) {
 	TRY_SYS(setsockopt(sock, SOL_IP, IP_MULTICAST_TTL, (void *) &optval,
 				sizeof(optval)));
 	/* disable loopback for multicast packets */
-	optval = 0;
-	TRY_SYS(setsockopt(sock, SOL_IP, IP_MULTICAST_LOOP, (void *) &optval,
-				sizeof(optval)));
+	if (!loopback) {
+		optval = 0;
+		TRY_SYS(setsockopt(sock, SOL_IP, IP_MULTICAST_LOOP, (void *) &optval,
+					sizeof(optval)));
+	}
 }

@@ -46,6 +46,8 @@ struct sockaddr_in ui_addr;
 int ctrl_sock;
 int mcast_sock;
 
+struct ip_mreq current_membership;
+
 /* events */
 struct event_base *base;
 
@@ -67,6 +69,7 @@ int discover_burst = DISCOVER_BURST_NUM;
 struct station_desc {
 	char expiry_ticks;
 	struct sockaddr_in mcast_addr;
+	struct sockaddr_in station_addr;
 	char tune_name[NAME_LEN];
 };
 struct station_desc stations[STATIONS_MAX];
@@ -86,11 +89,33 @@ struct station_desc* stations_free_slot() {
 
 void switch_station(int new_st) {
 	stations_curr = new_st;
-	// TODO
-	// reinit buffers
 
+	struct station_desc* st = stations + stations_curr;
 
+	if (st->expiry_ticks) {
+		// TODO
+		// flush buffers (depending on policy)
+		// reinit buffers
 
+		/* change mcast_sock multicast group membership */
+		/* remove from old group */
+		if (current_membership.imr_multiaddr.s_addr != htonl(INADDR_ANY)) {
+			/* we're added to a group */
+			TRY_SYS(setsockopt(mcast_sock, SOL_IP, IP_DROP_MEMBERSHIP,
+						(void *) &current_membership, sizeof(current_membership)));
+		}
+		/* add to new group */
+		memcpy(&current_membership.imr_multiaddr, &st->mcast_addr.sin_addr,
+				sizeof(current_membership.imr_multiaddr));
+		TRY_SYS(setsockopt(mcast_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+					(void *) &current_membership, sizeof(current_membership)));
+
+		/* connect (filter source) */
+		// TODO filer in mcast_recv_cb
+		//st->station_addr.sin_port = htons(0); /* sender's mcast and ctrl ports may differ */
+		//TRY_SYS(connect(mcast_sock, (struct sockaddr *) &st->station_addr, sizeof(st->station_addr)));
+		/* ready to listen */
+	}
 }
 
 void next_station() {
@@ -137,11 +162,15 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	struct proto_packet *packet = (struct proto_packet *) buffer;
 	struct proto_header *header = &packet->header;
 
-	TRY_SYS(r = read(sock, buffer, sizeof(buffer)));
-	fprintf(stderr, "Read smth.\n");
+	struct sockaddr_in addr;
+	socklen_t len = sizeof(addr);
+
+	TRY_SYS(r = recvfrom(sock, buffer, sizeof(buffer), 0, (struct sockaddr *) &addr, &len));
+	fprintf(stderr, "Read smth from %s.\n", inet_ntoa(addr.sin_addr));
 	if (r && r == (int) packet_length(packet)) {
 		if (header_flag_isset(&packet->header, PROTO_DATA)) {
-			fprintf(stderr, "Got data with seqno %d.\n", header_seqno(header));
+			fprintf(stderr, "Packet with seqno %d of total length %d.\n",
+					header_seqno(header), packet_length(packet));
 			// TODO
 		}
 		/* else: ignore packet */
@@ -207,7 +236,11 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	struct proto_ident packet;
 	ssize_t r;
-	TRY_SYS(r = read(sock, &packet, sizeof(packet)));
+	struct sockaddr_in addr;
+	socklen_t addrlen = sizeof(addr);
+
+	TRY_SYS(r = recvfrom(sock, &packet, sizeof(packet), 0,
+				(struct sockaddr *) &addr, &addrlen));
 	if (r && check_version(&packet.header)) {
 		if (r == sizeof(packet) && header_flag_isset(&packet.header, PROTO_IDRESP)) {
 			/* we've got identification response */
@@ -227,6 +260,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 				if (st) {
 					st->expiry_ticks = DISCOVER_KICK_THRESH;
 					memcpy(&st->mcast_addr, &packet.mcast_addr, sizeof(st->mcast_addr));
+					memcpy(&st->station_addr, &addr, sizeof(st->station_addr));
 					strncpy(st->tune_name, packet.tune_name, sizeof(st->tune_name) - 1);
 
 					/* check if we're waiting for it (and switch if so) */
@@ -406,7 +440,7 @@ int main(int argc, char **argv) {
 
 	local_mcast_addr.sin_family = AF_INET;
 	local_mcast_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	local_mcast_addr.sin_port = htons(DATA_PORT);
+	local_mcast_addr.sin_port = htons(data_port);
 
 	TRY_TRUE(sockaddr_dotted(&discover_addr, discover_dotted, ctrl_port) == 1);
 
@@ -414,14 +448,18 @@ int main(int argc, char **argv) {
 	ui_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	ui_addr.sin_port = htons(ui_port);
 
+	/* we need this to determine whether we're a member of group */
+	current_membership.imr_multiaddr.s_addr = htonl(INADDR_ANY);
+	current_membership.imr_interface.s_addr = htonl(INADDR_ANY);
+
 	/* setup sockets */
 	TRY_SYS(ctrl_sock = socket(PF_INET, SOCK_DGRAM, 0));
-	setup_multicast_sockopt(ctrl_sock, MCAST_TTL);
+	setup_multicast_sockopt(ctrl_sock, MCAST_TTL, MCAST_LOOPBACK);
 	TRY_SYS(bind(ctrl_sock, (struct sockaddr *) &local_ctrl_addr,
 				sizeof(local_ctrl_addr)));
 
 	TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
-	setup_multicast_sockopt(mcast_sock, MCAST_TTL);
+	setup_multicast_sockopt(mcast_sock, MCAST_TTL, MCAST_LOOPBACK);
 	TRY_SYS(bind(mcast_sock, (struct sockaddr *) &local_mcast_addr,
 				sizeof(local_mcast_addr)));
 

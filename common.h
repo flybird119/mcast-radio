@@ -17,9 +17,10 @@
 #define RTIME 250
 
 #define MCAST_TTL 4
+#define MCAST_LOOPBACK 1 // TODO for local testing
 
 int sockaddr_dotted(struct sockaddr_in* sockaddr, char* dotted_addr, in_port_t port);
 
-void setup_multicast_sockopt(int sock, int ttl);
+void setup_multicast_sockopt(int sock, int ttl, int loopback);
 
 #endif /* __COMMON_H */

@@ -246,7 +246,7 @@ int main(int argc, char **argv) {
 	/* setup mcast socket */
 	TRY_TRUE(sockaddr_dotted(&mcast_addr, mcast_dotted, data_port));
 	TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
-	setup_multicast_sockopt(mcast_sock, MCAST_TTL);
+	setup_multicast_sockopt(mcast_sock, MCAST_TTL, MCAST_LOOPBACK);
 	TRY_SYS(connect(mcast_sock, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)));
 
 	/* better to keep such things precomputed due to no-copy policy */
