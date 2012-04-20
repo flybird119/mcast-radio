@@ -16,6 +16,10 @@
 #define FSIZE 128 * (1<<10)
 #define RTIME 250
 
+#define MCAST_TTL 4
+
 int sockaddr_dotted(struct sockaddr_in* sockaddr, char* dotted_addr, in_port_t port);
+
+void setup_multicast_sockopt(int sock, int ttl);
 
 #endif /* __COMMON_H */

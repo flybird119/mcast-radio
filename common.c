@@ -4,6 +4,7 @@
 #include <netinet/in.h>
 
 #include "common.h"
+#include "err.h"
 
 int sockaddr_dotted(struct sockaddr_in* sockaddr, char* dotted_addr, in_port_t port) {
 	sockaddr->sin_family = AF_INET;
@@ -11,3 +12,17 @@ int sockaddr_dotted(struct sockaddr_in* sockaddr, char* dotted_addr, in_port_t p
 	return inet_aton(dotted_addr, &sockaddr->sin_addr);
 }
 
+void setup_multicast_sockopt(int sock, int ttl) {
+	int optval = 1;
+	/* enable multicast sending */
+	TRY_SYS(setsockopt(sock, SOL_SOCKET, SO_BROADCAST,
+				(void*) &optval, sizeof(optval)));
+	/* set TTL for multicast packets */
+	optval = ttl;
+	TRY_SYS(setsockopt(sock, SOL_IP, IP_MULTICAST_TTL, (void *) &optval,
+				sizeof(optval)));
+	/* disable loopback for multicast packets */
+	optval = 0;
+	TRY_SYS(setsockopt(sock, SOL_IP, IP_MULTICAST_LOOP, (void *) &optval,
+				sizeof(optval)));
+}

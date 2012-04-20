@@ -151,14 +151,14 @@ void ctrl_cb(evutil_socket_t sock, short ev, void *arg) {
 				header_init(&pack_ret_failed.header, ask_seqno, 0, PROTO_FAIL);
 
 				EXPECT(sendto(ctrl_sock, &pack_ret_failed, sizeof(pack_ret_failed), 0,
-						(struct sockaddr *) &addr, addr_len) == sizeof(pack_ret_failed),
+							(struct sockaddr *) &addr, addr_len) == sizeof(pack_ret_failed),
 						"Sending invalid retransmission response failed.");
 			}
 		}
 		/* whatever we've done addr is still valid */
 		if (header_flag_isset(&header, PROTO_IDQUERY)) {
 			EXPECT(sendto(sock, &pack_my_ident, sizeof(pack_my_ident), 0, (struct sockaddr *)
-					&addr, addr_len) == sizeof(pack_my_ident),
+						&addr, addr_len) == sizeof(pack_my_ident),
 					"Sending id response failed.");
 		}
 	}
@@ -246,11 +246,7 @@ int main(int argc, char **argv) {
 	/* setup mcast socket */
 	TRY_TRUE(sockaddr_dotted(&mcast_addr, mcast_dotted, data_port));
 	TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
-	{
-		int optval = 1;
-		TRY_SYS(setsockopt(mcast_sock, SOL_SOCKET, SO_BROADCAST,
-					(void*) &optval, sizeof(optval)));
-	}
+	setup_multicast_sockopt(mcast_sock, MCAST_TTL);
 	TRY_SYS(connect(mcast_sock, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)));
 
 	/* better to keep such things precomputed due to no-copy policy */

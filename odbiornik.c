@@ -243,7 +243,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 			fprintf(stderr, "Retransmission of packet %d failed.\n", header_seqno(&packet.header));
 			// TODO
 		}
-		/* else: ignoreign other responses */
+		/* else: ignore other responses */
 	}
 	/* else: ignore packet */
 }
@@ -416,19 +416,12 @@ int main(int argc, char **argv) {
 
 	/* setup sockets */
 	TRY_SYS(ctrl_sock = socket(PF_INET, SOCK_DGRAM, 0));
-	TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
-
-	{
-		int optval = 1;
-		/* enable broadcasting from and to sockets*/
-		TRY_SYS(setsockopt(ctrl_sock, SOL_SOCKET, SO_BROADCAST,
-					(void*) &optval, sizeof(optval)));
-		optval = 1;
-		TRY_SYS(setsockopt(mcast_sock, SOL_SOCKET, SO_BROADCAST,
-					(void*) &optval, sizeof(optval)));
-	}
+	setup_multicast_sockopt(ctrl_sock, MCAST_TTL);
 	TRY_SYS(bind(ctrl_sock, (struct sockaddr *) &local_ctrl_addr,
 				sizeof(local_ctrl_addr)));
+
+	TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
+	setup_multicast_sockopt(mcast_sock, MCAST_TTL);
 	TRY_SYS(bind(mcast_sock, (struct sockaddr *) &local_mcast_addr,
 				sizeof(local_mcast_addr)));
 
