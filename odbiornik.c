@@ -38,26 +38,30 @@ int rtime = RTIME;
 char tune_name[NAME_LEN] = "";
 
 /* sockets */
-struct sockaddr_in local_addr;
+struct sockaddr_in local_ctrl_addr;
+struct sockaddr_in local_mcast_addr;
 struct sockaddr_in discover_addr;
 struct sockaddr_in ui_addr;
 
-int discover_sock;
+int ctrl_sock;
+int mcast_sock;
 
 /* events */
 struct event_base *base;
 
 struct event *rtime_evt;
 struct event *discover_timeout_evt;
-struct event *discover_recv_evt;
+struct event *ctrl_recv_evt;
 struct event *refresh_ui_evt;
+struct event *mcast_recv_evt;
 
 struct evconnlistener *ui_listener;
 
 /* receiver state */
-int discovery_burst = DISCOVER_BURST_NUM;
+int discover_burst = DISCOVER_BURST_NUM;
 
 /* received data buffer */
+// TODO
 
 /* stations */
 struct station_desc {
@@ -84,9 +88,9 @@ void switch_station(int new_st) {
 	stations_curr = new_st;
 	// TODO
 	// reinit buffers
-	// change mcast
 
-	// TODO what to do with retransmission packets from previous station?
+
+
 }
 
 void next_station() {
@@ -123,18 +127,26 @@ int *ui_clients_free_slot() {
 }
 
 /* callbacks */
-void data_recv_cb(evutil_socket_t sock, short ev, void *arg) {
+void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 	UNUSED(arg);
 
-	// TODO
-}
+	static char buffer[PROTO_MAX_SIZE];
 
-void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
-	UNUSED(ev);
-	UNUSED(arg);
+	ssize_t r = 0;
+	struct proto_packet *packet = (struct proto_packet *) buffer;
+	struct proto_header *header = &packet->header;
 
-	// TODO
+	TRY_SYS(r = read(sock, buffer, sizeof(buffer)));
+	fprintf(stderr, "Read smth.\n");
+	if (r && r == (int) packet_length(packet)) {
+		if (header_flag_isset(&packet->header, PROTO_DATA)) {
+			fprintf(stderr, "Got data with seqno %d.\n", header_seqno(header));
+			// TODO
+		}
+		/* else: ignore packet */
+	} 
+	/* else: ignore packet */
 }
 
 void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
@@ -154,14 +166,14 @@ void discover_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 	struct proto_packet packet;
 	header_init(&packet.header, 0, 0, PROTO_IDQUERY);
 
-	EXPECT(sendto(discover_sock, &packet, packet_length(&packet), 0, (struct sockaddr *)
+	EXPECT(sendto(ctrl_sock, &packet, packet_length(&packet), 0, (struct sockaddr *)
 				&discover_addr,	sizeof(discover_addr)) == (int) packet_length(&packet),
 			"Sending identification request failed.\n");
 
-	if (discovery_burst) {
-		--discovery_burst;
-		if (0 == discovery_burst) {
-			/* switch to normal discovery timeout */
+	if (discover_burst) {
+		--discover_burst;
+		if (0 == discover_burst) {
+			/* switch to normal discover timeout */
 			struct timeval dtime_tv = {(DISCOVER_TIMEOUT / 1000),
 				1000*(DISCOVER_TIMEOUT % 100)};
 			TRY_SYS(event_add(discover_timeout_evt, &dtime_tv));
@@ -189,15 +201,16 @@ void discover_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 		event_active(refresh_ui_evt, 0, 0);
 }
 
-void discover_recv_cb(evutil_socket_t sock, short ev, void *arg) {
+void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 	UNUSED(arg);
 
 	struct proto_ident packet;
 	ssize_t r;
 	TRY_SYS(r = read(sock, &packet, sizeof(packet)));
-	if (check_version(&packet.header) && r == sizeof(packet)) {
-		if (header_flag_isset(&packet.header, PROTO_IDRESP)) {
+	if (r && check_version(&packet.header)) {
+		if (r == sizeof(packet) && header_flag_isset(&packet.header, PROTO_IDRESP)) {
+			/* we've got identification response */
 			/* check if already exists */
 			int i;
 			for (i = 0; i < stations_cap; ++i)
@@ -220,12 +233,17 @@ void discover_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					ASSERT(sizeof(tune_name) == sizeof(st->tune_name));
 					ASSERT(tune_name[sizeof(tune_name) - 1] == 0);
 					if (strcmp(st->tune_name, tune_name) == 0)
-						stations_curr = i;
+						switch_station(i);
 					/* refresh if added */
 					event_active(refresh_ui_evt, 0, 0);
 				}
 			}
+		} else if (r == sizeof(packet.header) && header_flag_isset(&packet.header, PROTO_FAIL)) {
+			/* we've been notified that retransmission failed */
+			fprintf(stderr, "Retransmission of packet %d failed.\n", header_seqno(&packet.header));
+			// TODO
 		}
+		/* else: ignoreign other responses */
 	}
 	/* else: ignore packet */
 }
@@ -317,7 +335,9 @@ void ui_new_client_cb(struct evconnlistener *listener, evutil_socket_t sock,
 	EXPECT(write(sock, mode, SIZEOF(mode)) == SIZEOF(mode),
 			"Setting character mode of remote terminal failed.");
 	/* we might read all the crap that telnet sent us in response,
-	 * but we'll skip it in event callback eitherway */
+	 * but we'll skip it in event callback eitherway
+	 * if client really can't change to character mode we really
+	 * can't do much more than just ask it */
 
 	/* create event for new connection */
 	struct event *new_evt = malloc(event_get_struct_event_size());
@@ -335,7 +355,7 @@ int main(int argc, char **argv) {
 	extern char *optarg;
 	extern int optind, optopt;
 	int c;
-	while ((c = getopt(argc, argv, "d:P:C:b:R:n:")) != -1) {
+	while ((c = getopt(argc, argv, "d:P:C:b:R:n:U:")) != -1) {
 		switch(c) {
 			case 'd':
 				strncpy(discover_dotted, optarg, sizeof(discover_dotted) - 1);
@@ -361,6 +381,9 @@ int main(int argc, char **argv) {
 			case 'n':
 				strncpy(tune_name, optarg, sizeof(tune_name) - 1);
 				break;
+			case 'U':
+				ui_port = atoi(optarg);
+				break;
 			default:
 				errflg++;
 				break;
@@ -377,9 +400,13 @@ int main(int argc, char **argv) {
 		ui_clients_socks[i] = NO_SOCK;
 
 	/* setup addresses */
-	local_addr.sin_family = AF_INET;
-	local_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	local_addr.sin_port = htons(0);
+	local_ctrl_addr.sin_family = AF_INET;
+	local_ctrl_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	local_ctrl_addr.sin_port = htons(0);
+
+	local_mcast_addr.sin_family = AF_INET;
+	local_mcast_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	local_mcast_addr.sin_port = htons(DATA_PORT);
 
 	TRY_TRUE(sockaddr_dotted(&discover_addr, discover_dotted, ctrl_port) == 1);
 
@@ -388,29 +415,40 @@ int main(int argc, char **argv) {
 	ui_addr.sin_port = htons(ui_port);
 
 	/* setup sockets */
-	TRY_SYS(discover_sock = socket(PF_INET, SOCK_DGRAM, 0));
+	TRY_SYS(ctrl_sock = socket(PF_INET, SOCK_DGRAM, 0));
+	TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
+
 	{
 		int optval = 1;
-		TRY_SYS(setsockopt(discover_sock, SOL_SOCKET, SO_BROADCAST,
+		/* enable broadcasting from and to sockets*/
+		TRY_SYS(setsockopt(ctrl_sock, SOL_SOCKET, SO_BROADCAST,
+					(void*) &optval, sizeof(optval)));
+		optval = 1;
+		TRY_SYS(setsockopt(mcast_sock, SOL_SOCKET, SO_BROADCAST,
 					(void*) &optval, sizeof(optval)));
 	}
-	TRY_SYS(bind(discover_sock, (struct sockaddr *) &local_addr, sizeof(local_addr)));
+	TRY_SYS(bind(ctrl_sock, (struct sockaddr *) &local_ctrl_addr,
+				sizeof(local_ctrl_addr)));
+	TRY_SYS(bind(mcast_sock, (struct sockaddr *) &local_mcast_addr,
+				sizeof(local_mcast_addr)));
 
 	/* setup eventbase */
 	TRY_TRUE(base = event_base_new());
 
 	/* setup events */
-	// TODO data recv
-	// TODO ctrl recv
+	TRY_TRUE(mcast_recv_evt = event_new(base, mcast_sock,
+				EV_READ|EV_PERSIST, mcast_recv_cb, NULL));
+	TRY_SYS(event_add(mcast_recv_evt, NULL));
 
 	TRY_TRUE(ui_listener = evconnlistener_new_bind(base, ui_new_client_cb, NULL,
-				LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1, (struct sockaddr*) &ui_addr, sizeof(ui_addr)));
+				LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1,
+				(struct sockaddr*) &ui_addr, sizeof(ui_addr)));
 
 	TRY_TRUE(refresh_ui_evt = event_new(base, -1, 0, refresh_ui_cb, NULL));
 
-	TRY_TRUE(discover_recv_evt = event_new(base, discover_sock,
-				EV_READ|EV_PERSIST, discover_recv_cb, NULL));
-	TRY_SYS(event_add(discover_recv_evt, NULL));
+	TRY_TRUE(ctrl_recv_evt = event_new(base, ctrl_sock,
+				EV_READ|EV_PERSIST, ctrl_recv_cb, NULL));
+	TRY_SYS(event_add(ctrl_recv_evt, NULL));
 
 	TRY_TRUE(discover_timeout_evt = 
 			event_new(base, -1, EV_TIMEOUT|EV_PERSIST, discover_timeout_cb, NULL));
@@ -426,13 +464,15 @@ int main(int argc, char **argv) {
 
 	/* clean exit */
 	evconnlistener_free(ui_listener);
+	event_free(mcast_recv_evt);
 	event_free(refresh_ui_evt);
-	event_free(discover_recv_evt);
+	event_free(ctrl_recv_evt);
 	event_free(discover_timeout_evt);
 	event_free(rtime_evt);
 
 	event_base_free(base);
-	close(discover_sock);
+	close(ctrl_sock);
+	close(mcast_sock);
 
 	exit(EXIT_SUCCESS);
 }

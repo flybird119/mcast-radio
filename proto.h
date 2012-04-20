@@ -7,6 +7,8 @@
 
 #define PROTO_VERSION 1
 
+#define PROTO_MAX_SIZE (1<<16)
+
 #define PROTO_RETRANSM 0x1
 #define PROTO_IDQUERY 0x2
 #define PROTO_IDRESP 0x4

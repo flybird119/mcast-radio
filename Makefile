@@ -1,7 +1,7 @@
 # versatile Makefile
 CC          := gcc -g
-CFLAGS      := -Wall -Wextra -pedantic -std=gnu11
-LDFLAGS     := -Wall -Wextra -pedantic -std=gnu11 -levent
+CFLAGS      := -Wall -Wextra -pedantic -std=gnu99
+LDFLAGS     := -Wall -Wextra -pedantic -std=gnu99 -levent
 
 # C sources
 SOURCES     := $(wildcard *.c)

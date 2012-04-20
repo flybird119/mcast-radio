@@ -141,11 +141,15 @@ void ctrl_cb(evutil_socket_t sock, short ev, void *arg) {
 	if (check_version(&header) && r == sizeof(header)) {
 		if (header_flag_isset(&header, PROTO_RETRANSM)) {
 			/* mark packet in buffer with PROTO_DORETR flag */
-			struct proto_packet *pack = packets_buf_get(header_seqno(&header));
+			seqno_t ask_seqno = header_seqno(&header);
+			struct proto_packet *pack = packets_buf_get(ask_seqno);
+
 			if (pack) {
 				header_flag_set(&pack->header, PROTO_DORETR);
 			} else {
 				/* invalid retransmission request - response directly to requester */
+				header_init(&pack_ret_failed.header, ask_seqno, 0, PROTO_FAIL);
+
 				EXPECT(sendto(ctrl_sock, &pack_ret_failed, sizeof(pack_ret_failed), 0,
 						(struct sockaddr *) &addr, addr_len) == sizeof(pack_ret_failed),
 						"Sending invalid retransmission response failed.");
@@ -240,7 +244,7 @@ int main(int argc, char **argv) {
 	TRY_SYS(bind(ctrl_sock, (struct sockaddr *) &local_addr, sizeof(local_addr)));
 
 	/* setup mcast socket */
-	TRY_TRUE(sockaddr_dotted(&mcast_addr, mcast_dotted, data_port) == 1);
+	TRY_TRUE(sockaddr_dotted(&mcast_addr, mcast_dotted, data_port));
 	TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
 	{
 		int optval = 1;
@@ -255,7 +259,7 @@ int main(int argc, char **argv) {
 	strncpy(pack_my_ident.app_name, argv[0], sizeof(pack_my_ident.app_name) - 1);
 	strncpy(pack_my_ident.tune_name, name, sizeof(pack_my_ident.tune_name) - 1);
 
-	header_init(&pack_ret_failed.header, 0, 0, PROTO_FAIL);
+	/* NOTE: pack_ret_failed must be reinitialized before sending with proper seqno */
 
 	/* setup eventbase */
 	TRY_TRUE(base = event_base_new());
