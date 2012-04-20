@@ -61,12 +61,12 @@ struct proto_packet * packets_buf_get(const seqno_t seqno) {
 		return NULL;
 	struct proto_header *header =
 		(struct proto_header *) (packets_buf + packets_buf_begin * packet_sz);
-	int index = seqno - header->seqno;
+	int index = seqno - header_seqno(header);
 	if (index < 0)
 		return NULL;
 	index = (packets_buf_begin + index) % packets_buf_cap;
 	header = (struct proto_header *) (packets_buf + index * packet_sz);
-	if (seqno != header->seqno)
+	if (seqno != header_seqno(header))
 		return NULL;
 	return (struct proto_packet *) header;
 }
@@ -100,9 +100,9 @@ void stdin_cb(evutil_socket_t sock, short ev, void *arg) {
 		len += r;
 		if (len == psize) {
 			/* packet is full, init */
-			init_header_p(header, last_seqno++, len, PROTO_DATA);
+			header_init(header, last_seqno++, len, PROTO_DATA);
 			ASSERT(psize + (int) sizeof(struct proto_header) == packet_sz);
-			ASSERT(packet_sz == (int) packet_len_p(packet));
+			ASSERT(packet_sz == (int) packet_length(packet));
 			/* send */
 			EXPECT(write(mcast_sock, packet, packet_sz) == packet_sz,
 					"Sending streming data failed.");
@@ -113,10 +113,10 @@ void stdin_cb(evutil_socket_t sock, short ev, void *arg) {
 	} else {
 		if (len) {
 			/* end of input, init packet as is */
-			init_header_p(header, last_seqno++, len, PROTO_DATA);
+			header_init(header, last_seqno++, len, PROTO_DATA);
 			/* send */
 			ASSERT(len + sizeof(struct proto_header));
-			len = packet_len_p(packet);
+			len = packet_length(packet);
 			EXPECT(write(mcast_sock, packet, len) == len,
 					"Sending streaming data failed.");
 			/* everything sent */
@@ -138,19 +138,21 @@ void ctrl_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	TRY_SYS(r = recvfrom(sock, &header, sizeof(header), 0,
 				(struct sockaddr *) &addr, &addr_len));
-	if (r == sizeof(header)) {
-		if (PROTO_RETRANSM & header.flags) {
+	if (check_version(&header) && r == sizeof(header)) {
+		if (header_flag_isset(&header, PROTO_RETRANSM)) {
 			/* mark packet in buffer with PROTO_DORETR flag */
-			struct proto_packet *pack = packets_buf_get(header.seqno);
+			struct proto_packet *pack = packets_buf_get(header_seqno(&header));
 			if (pack) {
-				pack->header.flags |= PROTO_DORETR;
+				header_flag_set(&pack->header, PROTO_DORETR);
+			} else {
+				/* invalid retransmission request - response directly to requester */
+				EXPECT(sendto(ctrl_sock, &pack_ret_failed, sizeof(pack_ret_failed), 0,
+						(struct sockaddr *) &addr, addr_len) == sizeof(pack_ret_failed),
+						"Sending invalid retransmission response failed.");
 			}
-			/* else: ignore packet */
-			// TODO what should we do with invalid retransmission request */
 		}
-		/* whatever we've done req->addr is still valid */
-		if (PROTO_IDQUERY & header.flags) {
-			/* NOTE: we don't want to fail here actually */
+		/* whatever we've done addr is still valid */
+		if (header_flag_isset(&header, PROTO_IDQUERY)) {
 			EXPECT(sendto(sock, &pack_my_ident, sizeof(pack_my_ident), 0, (struct sockaddr *)
 					&addr, addr_len) == sizeof(pack_my_ident),
 					"Sending id response failed.");
@@ -167,8 +169,8 @@ void do_retr_cb(evutil_socket_t sock, short ev, void *arg) {
 	for (int i = packets_buf_begin; i < packets_buf_end; i = (i+1) % packets_buf_cap) {
 		struct proto_packet *packet = (struct proto_packet*) (packets_buf + i * packet_sz);
 
-		if (packet->header.flags & PROTO_DORETR) {
-			packet->header.flags &= ~PROTO_DORETR;
+		if (header_flag_isset(&packet->header, PROTO_DORETR)) {
+			header_flag_clear(&packet->header, PROTO_DORETR);
 			EXPECT(write(mcast_sock, packet, packet_sz) == packet_sz,
 					"Sending retransmission response failed.");
 		}
@@ -248,12 +250,12 @@ int main(int argc, char **argv) {
 	TRY_SYS(connect(mcast_sock, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)));
 
 	/* better to keep such things precomputed due to no-copy policy */
-	init_header(pack_my_ident.header, 0, data_len(pack_my_ident), PROTO_IDRESP);
+	header_ident_init(&pack_my_ident.header, 0, PROTO_IDRESP);
 	memcpy(&pack_my_ident.mcast_addr, &mcast_addr, sizeof(pack_my_ident.mcast_addr));
 	strncpy(pack_my_ident.app_name, argv[0], sizeof(pack_my_ident.app_name) - 1);
 	strncpy(pack_my_ident.tune_name, name, sizeof(pack_my_ident.tune_name) - 1);
 
-	init_header(pack_ret_failed.header, 0, 0, PROTO_FAIL);
+	header_init(&pack_ret_failed.header, 0, 0, PROTO_FAIL);
 
 	/* setup eventbase */
 	TRY_TRUE(base = event_base_new());

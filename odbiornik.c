@@ -25,6 +25,9 @@
 #define DISCOVER_TIMEOUT 5000
 #define DISCOVER_KICK_THRESH 4
 
+#define TELNET_KEY_DOWN 4348699
+#define TELNET_KEY_UP 4283163
+
 /* receiver configuration */
 char discover_dotted[ADDR_LEN] = DISCOVER_ADDR;
 in_port_t data_port = DATA_PORT;
@@ -149,10 +152,10 @@ void discover_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	/* send discover request */
 	struct proto_packet packet;
-	init_header(packet.header, 0, 0, PROTO_IDQUERY);
+	header_init(&packet.header, 0, 0, PROTO_IDQUERY);
 
-	EXPECT(sendto(discover_sock, &packet, packet_len(packet), 0, (struct sockaddr *)
-				&discover_addr,	sizeof(discover_addr)) == (int) packet_len(packet),
+	EXPECT(sendto(discover_sock, &packet, packet_length(&packet), 0, (struct sockaddr *)
+				&discover_addr,	sizeof(discover_addr)) == (int) packet_length(&packet),
 			"Sending identification request failed.\n");
 
 	if (discovery_burst) {
@@ -193,8 +196,8 @@ void discover_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	struct proto_ident packet;
 	ssize_t r;
 	TRY_SYS(r = read(sock, &packet, sizeof(packet)));
-	if (r == sizeof(packet)) {
-		if (PROTO_IDRESP & packet.header.flags) {
+	if (check_version(&packet.header) && r == sizeof(packet)) {
+		if (header_flag_isset(&packet.header, PROTO_IDRESP)) {
 			/* check if already exists */
 			int i;
 			for (i = 0; i < stations_cap; ++i)
@@ -236,13 +239,15 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 	static char rendered_screen[8096];
 
 	int n = 0;
-	n += sprintf(rendered_screen + n, "+------------------------------Znalezione stacje:------------------------------+\r\n\r\n");
+	n += sprintf(rendered_screen + n, "+------------------------------Znalezione stacje:------------------------------+\r\n|\r\n");
 	/* print stations list */
 	for (int i = 0; i < stations_cap; ++i) {
 		if (stations[i].expiry_ticks) {
-			n += sprintf(rendered_screen + n, "%d %s %c\r\n", i+1, stations[i].tune_name, (stations_curr == i) ? '<' : ' ');
-		} else {
-			n += sprintf(rendered_screen + n, "%d \r\n", i+1);
+			n += sprintf(rendered_screen + n,
+					"| %c %d %s\r\n",
+					(stations_curr == i) ? '>' : ' ',
+					i+1,
+					stations[i].tune_name);
 		}
 	}
 	n += sprintf(rendered_screen + n, "+------------------------------------------------------------------------------+\r\n");
@@ -266,14 +271,14 @@ void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
 	ssize_t r;
 	TRY_SYS(r = read(sock, &comm, sizeof(comm)));
 	if (r) {
-		// TODO telnet data format?
-		if (comm == 4348699) {
+		if (comm == TELNET_KEY_DOWN) {
 			next_station();
 			event_active(refresh_ui_evt, 0, 0);
-		} else if (comm == 4283163) {
+		} else if (comm == TELNET_KEY_UP) {
 			prev_station();
 			event_active(refresh_ui_evt, 0, 0);
 		}
+		/* else: unrecognized option */
 	} else {
 		/* end of connection */
 		event_free(evt);

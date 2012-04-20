@@ -16,7 +16,6 @@
 #define FSIZE 128 * (1<<10)
 #define RTIME 250
 
-int sockaddr_dotted(struct sockaddr_in* sockaddr, char* dotted_addr,
-		in_port_t port);
+int sockaddr_dotted(struct sockaddr_in* sockaddr, char* dotted_addr, in_port_t port);
 
 #endif /* __COMMON_H */
