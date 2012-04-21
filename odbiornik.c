@@ -35,7 +35,7 @@ in_port_t ctrl_port = CTRL_PORT;
 int ui_port = UI_PORT;
 int bsize = BSIZE;
 int rtime = RTIME;
-char tune_name[NAME_LEN] = "";
+char dest_tune_name[NAME_LEN] = "";
 
 /* sockets */
 struct sockaddr_in local_ctrl_addr;
@@ -69,12 +69,25 @@ int discover_burst = DISCOVER_BURST_NUM;
 struct station_desc {
 	char expiry_ticks;
 	struct sockaddr_in mcast_addr;
-	struct sockaddr_in station_addr;
+	struct sockaddr_in local_addr;
 	char tune_name[NAME_LEN];
 };
 struct station_desc stations[STATIONS_MAX];
 int stations_cap = SIZEOF(stations);
 int stations_curr = 0;
+
+int stations_equal(struct station_desc *st, struct proto_ident *ident) {
+	return (memcmp(&st->mcast_addr, &ident->mcast_addr, sizeof(st->mcast_addr)) == 0)
+		&& (st->local_addr.sin_addr.s_addr == ident->local_addr.sin_addr.s_addr)
+		&& (strcmp(st->tune_name, ident->tune_name) == 0);
+}
+
+void station_init(struct station_desc *st, struct proto_ident *packet) {
+	st->expiry_ticks = DISCOVER_KICK_THRESH;
+	memcpy(&st->mcast_addr, &packet->mcast_addr, sizeof(st->mcast_addr));
+	memcpy(&st->local_addr, &packet->local_addr, sizeof(st->local_addr));
+	strncpy(st->tune_name, packet->tune_name, sizeof(st->tune_name) - 1);
+}
 
 struct station_desc* stations_free_slot() {
 	int i;
@@ -109,11 +122,11 @@ void switch_station(int new_st) {
 				sizeof(current_membership.imr_multiaddr));
 		TRY_SYS(setsockopt(mcast_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
 					(void *) &current_membership, sizeof(current_membership)));
-
-		/* connect (filter source) */
-		// TODO filer in mcast_recv_cb
-		//st->station_addr.sin_port = htons(0); /* sender's mcast and ctrl ports may differ */
-		//TRY_SYS(connect(mcast_sock, (struct sockaddr *) &st->station_addr, sizeof(st->station_addr)));
+		// TODO
+		/*
+		   st->station_addr.sin_port = htons(0);
+		   TRY_SYS(connect(mcast_sock, (struct sockaddr *) &st->station_addr, sizeof(st->station_addr)));
+		   */
 		/* ready to listen */
 	}
 }
@@ -122,7 +135,7 @@ void next_station() {
 	int i = stations_curr;
 	do {
 		i = (i+1) % stations_cap;
-	} while (i != stations_curr);
+	} while (stations[i].expiry_ticks == 0 && i != stations_curr);
 	switch_station((i == stations_curr) ? 0 : i);
 }
 
@@ -132,7 +145,7 @@ void prev_station() {
 		--i;
 		if (i < 0)
 			i = stations_cap - 1;
-	} while (i != stations_curr);
+	} while (stations[i].expiry_ticks == 0 && i != stations_curr);
 	switch_station((i == stations_curr) ? 0 : i);
 }
 
@@ -168,6 +181,11 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	TRY_SYS(r = recvfrom(sock, buffer, sizeof(buffer), 0, (struct sockaddr *) &addr, &len));
 	fprintf(stderr, "Read smth from %s.\n", inet_ntoa(addr.sin_addr));
 	if (r && r == (int) packet_length(packet)) {
+		/* this should be done via connect() but doesn't work that way */
+		if (addr.sin_addr.s_addr != stations[stations_curr].local_addr.sin_addr.s_addr) {
+			/* ignore packet */
+			return;
+		}
 		if (header_flag_isset(&packet->header, PROTO_DATA)) {
 			fprintf(stderr, "Packet with seqno %d of total length %d.\n",
 					header_seqno(header), packet_length(packet));
@@ -247,8 +265,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 			/* check if already exists */
 			int i;
 			for (i = 0; i < stations_cap; ++i)
-				if (stations[i].expiry_ticks &&
-						(strcmp(stations[i].tune_name, packet.tune_name) == 0))
+				if (stations[i].expiry_ticks && stations_equal(stations + i, &packet))
 					break;
 			if (i < stations_cap) {
 				/* reset station */
@@ -258,15 +275,13 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 				struct station_desc *st = stations_free_slot();
 				/* if found free slot */
 				if (st) {
-					st->expiry_ticks = DISCOVER_KICK_THRESH;
-					memcpy(&st->mcast_addr, &packet.mcast_addr, sizeof(st->mcast_addr));
-					memcpy(&st->station_addr, &addr, sizeof(st->station_addr));
-					strncpy(st->tune_name, packet.tune_name, sizeof(st->tune_name) - 1);
+					/* init station */
+					station_init(st, &packet);
 
-					/* check if we're waiting for it (and switch if so) */
-					ASSERT(sizeof(tune_name) == sizeof(st->tune_name));
-					ASSERT(tune_name[sizeof(tune_name) - 1] == 0);
-					if (strcmp(st->tune_name, tune_name) == 0)
+					/* check if we're waiting for this station (and switch if so) */
+					ASSERT(sizeof(dest_tune_name) == sizeof(st->tune_name));
+					ASSERT(dest_tune_name[sizeof(dest_tune_name) - 1] == 0);
+					if (strcmp(st->tune_name, dest_tune_name) == 0)
 						switch_station(i);
 					/* refresh if added */
 					event_active(refresh_ui_evt, 0, 0);
@@ -413,7 +428,7 @@ int main(int argc, char **argv) {
 					errflg++;
 				break;
 			case 'n':
-				strncpy(tune_name, optarg, sizeof(tune_name) - 1);
+				strncpy(dest_tune_name, optarg, sizeof(dest_tune_name) - 1);
 				break;
 			case 'U':
 				ui_port = atoi(optarg);

@@ -33,8 +33,9 @@ struct proto_ident {
 	struct proto_header header;
 	/* data */
 	struct sockaddr_in mcast_addr;
-	char app_name[NAME_LEN];
+	struct sockaddr_in local_addr;
 	char tune_name[NAME_LEN];
+	char app_name[NAME_LEN];
 };
 
 struct proto_packet {

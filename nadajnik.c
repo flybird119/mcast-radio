@@ -30,7 +30,6 @@ struct proto_ident pack_my_ident;
 struct proto_packet pack_ret_failed;
 
 /* sockets */
-struct sockaddr_in local_addr;
 struct sockaddr_in mcast_addr;
 
 int mcast_sock;
@@ -235,26 +234,37 @@ int main(int argc, char **argv) {
 	packet_sz = sizeof(struct proto_header) + psize;
 	packets_buf = (char *) malloc(packets_buf_cap * packet_sz);
 
-	/* setup ctrl socket */
-	local_addr.sin_family = AF_INET;
-	local_addr.sin_family = htonl(INADDR_ANY);
-	local_addr.sin_port = htons(ctrl_port);
+	{
+		struct sockaddr_in temp_addr;
+		/* setup ctrl socket */
+		temp_addr.sin_family = AF_INET;
+		temp_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+		temp_addr.sin_port = htons(ctrl_port);
 
-	TRY_SYS(ctrl_sock = socket(PF_INET, SOCK_DGRAM, 0));
-	TRY_SYS(bind(ctrl_sock, (struct sockaddr *) &local_addr, sizeof(local_addr)));
+		TRY_SYS(ctrl_sock = socket(PF_INET, SOCK_DGRAM, 0));
+		TRY_SYS(bind(ctrl_sock, (struct sockaddr *) &temp_addr, sizeof(temp_addr)));
 
-	/* setup mcast socket */
-	TRY_TRUE(sockaddr_dotted(&mcast_addr, mcast_dotted, data_port));
-	TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
-	setup_multicast_sockopt(mcast_sock, MCAST_TTL, MCAST_LOOPBACK);
-	TRY_SYS(connect(mcast_sock, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)));
+		/* setup mcast socket */
+		temp_addr.sin_family = AF_INET;
+		temp_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+		temp_addr.sin_port = htons(0);
 
-	/* better to keep such things precomputed due to no-copy policy */
-	header_ident_init(&pack_my_ident.header, 0, PROTO_IDRESP);
-	memcpy(&pack_my_ident.mcast_addr, &mcast_addr, sizeof(pack_my_ident.mcast_addr));
-	strncpy(pack_my_ident.app_name, argv[0], sizeof(pack_my_ident.app_name) - 1);
-	strncpy(pack_my_ident.tune_name, name, sizeof(pack_my_ident.tune_name) - 1);
+		TRY_TRUE(sockaddr_dotted(&mcast_addr, mcast_dotted, data_port));
+		TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
+		TRY_SYS(bind(mcast_sock, (struct sockaddr *) &temp_addr, sizeof(temp_addr)));
+		setup_multicast_sockopt(mcast_sock, MCAST_TTL, MCAST_LOOPBACK);
+		TRY_SYS(connect(mcast_sock, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)));
 
+		/* better to keep such things precomputed due to no-copy policy */
+		socklen_t addr_len = sizeof(temp_addr);
+		TRY_SYS(getsockname(mcast_sock, (struct sockaddr *) &temp_addr, &addr_len));
+
+		header_ident_init(&pack_my_ident.header, 0, PROTO_IDRESP);
+		memcpy(&pack_my_ident.mcast_addr, &mcast_addr, sizeof(pack_my_ident.mcast_addr));
+		memcpy(&pack_my_ident.local_addr, &temp_addr, sizeof(pack_my_ident.local_addr));
+		strncpy(pack_my_ident.app_name, argv[0], sizeof(pack_my_ident.app_name) - 1);
+		strncpy(pack_my_ident.tune_name, name, sizeof(pack_my_ident.tune_name) - 1);
+	}
 	/* NOTE: pack_ret_failed must be reinitialized before sending with proper seqno */
 
 	/* setup eventbase */
