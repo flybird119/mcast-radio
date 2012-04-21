@@ -38,8 +38,6 @@ int rtime = RTIME;
 char dest_tune_name[NAME_LEN] = "";
 
 /* sockets */
-struct sockaddr_in local_ctrl_addr;
-struct sockaddr_in local_mcast_addr;
 struct sockaddr_in discover_addr;
 struct sockaddr_in ui_addr;
 
@@ -123,10 +121,8 @@ void switch_station(int new_st) {
 		TRY_SYS(setsockopt(mcast_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
 					(void *) &current_membership, sizeof(current_membership)));
 		// TODO
-		/*
-		   st->station_addr.sin_port = htons(0);
-		   TRY_SYS(connect(mcast_sock, (struct sockaddr *) &st->station_addr, sizeof(st->station_addr)));
-		   */
+		//TRY_SYS(connect(mcast_sock, (struct sockaddr *) &st->local_addr, sizeof(st->local_addr)));
+		fprintf(stderr, "Connected %s:%d.\n", inet_ntoa(st->local_addr.sin_addr), ntohs(st->local_addr.sin_port));
 		/* ready to listen */
 	}
 }
@@ -449,14 +445,6 @@ int main(int argc, char **argv) {
 		ui_clients_socks[i] = NO_SOCK;
 
 	/* setup addresses */
-	local_ctrl_addr.sin_family = AF_INET;
-	local_ctrl_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	local_ctrl_addr.sin_port = htons(0);
-
-	local_mcast_addr.sin_family = AF_INET;
-	local_mcast_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	local_mcast_addr.sin_port = htons(data_port);
-
 	TRY_TRUE(sockaddr_dotted(&discover_addr, discover_dotted, ctrl_port) == 1);
 
 	ui_addr.sin_family = AF_INET;
@@ -467,16 +455,25 @@ int main(int argc, char **argv) {
 	current_membership.imr_multiaddr.s_addr = htonl(INADDR_ANY);
 	current_membership.imr_interface.s_addr = htonl(INADDR_ANY);
 
-	/* setup sockets */
-	TRY_SYS(ctrl_sock = socket(PF_INET, SOCK_DGRAM, 0));
-	setup_multicast_sockopt(ctrl_sock, MCAST_TTL, MCAST_LOOPBACK);
-	TRY_SYS(bind(ctrl_sock, (struct sockaddr *) &local_ctrl_addr,
-				sizeof(local_ctrl_addr)));
+	{
+		struct sockaddr_in temp_addr;
+		temp_addr.sin_family = AF_INET;
+		temp_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-	TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
-	setup_multicast_sockopt(mcast_sock, MCAST_TTL, MCAST_LOOPBACK);
-	TRY_SYS(bind(mcast_sock, (struct sockaddr *) &local_mcast_addr,
-				sizeof(local_mcast_addr)));
+		/* setup ctrl socket */
+		temp_addr.sin_port = htons(0);
+		TRY_SYS(ctrl_sock = socket(PF_INET, SOCK_DGRAM, 0));
+		TRY_SYS(bind(ctrl_sock, (const struct sockaddr *) &temp_addr,
+					sizeof(temp_addr)));
+		setup_multicast_sockopt(ctrl_sock, MCAST_TTL, MCAST_LOOPBACK);
+
+		/* setup mcast socket */
+		temp_addr.sin_port = htons(data_port);
+		TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
+		TRY_SYS(bind(mcast_sock, (struct sockaddr *) &temp_addr,
+					sizeof(temp_addr)));
+		setup_multicast_sockopt(mcast_sock, MCAST_TTL, MCAST_LOOPBACK);
+	}
 
 	/* setup eventbase */
 	TRY_TRUE(base = event_base_new());

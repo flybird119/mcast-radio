@@ -236,23 +236,23 @@ int main(int argc, char **argv) {
 
 	{
 		struct sockaddr_in temp_addr;
-		/* setup ctrl socket */
 		temp_addr.sin_family = AF_INET;
 		temp_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-		temp_addr.sin_port = htons(ctrl_port);
 
+		/* setup ctrl socket */
+		temp_addr.sin_port = htons(ctrl_port);
 		TRY_SYS(ctrl_sock = socket(PF_INET, SOCK_DGRAM, 0));
-		TRY_SYS(bind(ctrl_sock, (struct sockaddr *) &temp_addr, sizeof(temp_addr)));
+		TRY_SYS(bind(ctrl_sock, (const struct sockaddr *) &temp_addr, sizeof(temp_addr)));
+		setup_multicast_sockopt(ctrl_sock, MCAST_TTL, MCAST_LOOPBACK);
 
 		/* setup mcast socket */
-		temp_addr.sin_family = AF_INET;
-		temp_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 		temp_addr.sin_port = htons(0);
-
 		TRY_TRUE(sockaddr_dotted(&mcast_addr, mcast_dotted, data_port));
+
 		TRY_SYS(mcast_sock = socket(PF_INET, SOCK_DGRAM, 0));
-		TRY_SYS(bind(mcast_sock, (struct sockaddr *) &temp_addr, sizeof(temp_addr)));
+		TRY_SYS(bind(mcast_sock, (const struct sockaddr *) &temp_addr, sizeof(temp_addr)));
 		setup_multicast_sockopt(mcast_sock, MCAST_TTL, MCAST_LOOPBACK);
+
 		TRY_SYS(connect(mcast_sock, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)));
 
 		/* better to keep such things precomputed due to no-copy policy */
