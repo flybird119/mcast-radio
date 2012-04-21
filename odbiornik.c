@@ -24,6 +24,7 @@
 #define DISCOVER_BURST_TIMEOUT 500
 #define DISCOVER_TIMEOUT 5000
 #define DISCOVER_KICK_THRESH 4
+#define EXPIRY_INFTY (-1)
 
 #define TELNET_KEY_DOWN 4348699
 #define TELNET_KEY_UP 4283163
@@ -70,15 +71,6 @@ struct station_desc {
 	struct sockaddr_in local_addr;
 	char tune_name[NAME_LEN];
 };
-struct station_desc stations[STATIONS_MAX];
-int stations_cap = SIZEOF(stations);
-int stations_curr = 0;
-
-int stations_equal(struct station_desc *st, struct proto_ident *ident) {
-	return (memcmp(&st->mcast_addr, &ident->mcast_addr, sizeof(st->mcast_addr)) == 0)
-		&& (st->local_addr.sin_addr.s_addr == ident->local_addr.sin_addr.s_addr)
-		&& (strcmp(st->tune_name, ident->tune_name) == 0);
-}
 
 void station_init(struct station_desc *st, struct proto_ident *packet) {
 	st->expiry_ticks = DISCOVER_KICK_THRESH;
@@ -86,6 +78,16 @@ void station_init(struct station_desc *st, struct proto_ident *packet) {
 	memcpy(&st->local_addr, &packet->local_addr, sizeof(st->local_addr));
 	strncpy(st->tune_name, packet->tune_name, sizeof(st->tune_name) - 1);
 }
+
+int stations_equal(struct station_desc *st, struct proto_ident *ident) {
+	return (memcmp(&st->mcast_addr, &ident->mcast_addr, sizeof(st->mcast_addr)) == 0)
+		&& (st->local_addr.sin_addr.s_addr == ident->local_addr.sin_addr.s_addr)
+		&& (strcmp(st->tune_name, ident->tune_name) == 0);
+}
+
+struct station_desc stations[STATIONS_MAX]; /* station at index 0 is only a placeholder */
+int stations_cap = SIZEOF(stations);
+int stations_curr = 0;
 
 struct station_desc* stations_free_slot() {
 	int i;
@@ -99,6 +101,8 @@ struct station_desc* stations_free_slot() {
 }
 
 void switch_station(int new_st) {
+	if (stations_curr == new_st)
+		return;
 	stations_curr = new_st;
 
 	struct station_desc* st = stations + stations_curr;
@@ -118,11 +122,13 @@ void switch_station(int new_st) {
 		/* add to new group */
 		memcpy(&current_membership.imr_multiaddr, &st->mcast_addr.sin_addr,
 				sizeof(current_membership.imr_multiaddr));
-		TRY_SYS(setsockopt(mcast_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-					(void *) &current_membership, sizeof(current_membership)));
-		// TODO
-		//TRY_SYS(connect(mcast_sock, (struct sockaddr *) &st->local_addr, sizeof(st->local_addr)));
-		fprintf(stderr, "Connected %s:%d.\n", inet_ntoa(st->local_addr.sin_addr), ntohs(st->local_addr.sin_port));
+		if (st->mcast_addr.sin_addr.s_addr) {
+			TRY_SYS(setsockopt(mcast_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+						(void *) &current_membership, sizeof(current_membership)));
+			// TODO
+			//TRY_SYS(connect(mcast_sock, (struct sockaddr *) &st->local_addr, sizeof(st->local_addr)));
+			fprintf(stderr, "Connected %s:%d.\n", inet_ntoa(st->local_addr.sin_addr), ntohs(st->local_addr.sin_port));
+		}
 		/* ready to listen */
 	}
 }
@@ -227,6 +233,7 @@ void discover_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 	/* remove expired stations */
 	int i;
 	for (i = 0; i < stations_cap; ++i) {
+		/* NOTE: EXPIRY_INFTY < 0 */
 		if (stations[i].expiry_ticks > 0) {
 			stations[i].expiry_ticks--;
 			if (stations[i].expiry_ticks == 0)
@@ -278,7 +285,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					ASSERT(sizeof(dest_tune_name) == sizeof(st->tune_name));
 					ASSERT(dest_tune_name[sizeof(dest_tune_name) - 1] == 0);
 					if (strcmp(st->tune_name, dest_tune_name) == 0)
-						switch_station(i);
+						switch_station(st-stations);
 					/* refresh if added */
 					event_active(refresh_ui_evt, 0, 0);
 				}
@@ -304,12 +311,13 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 	int n = 0;
 	n += sprintf(rendered_screen + n, "+------------------------------Znalezione stacje:------------------------------+\r\n|\r\n");
 	/* print stations list */
-	for (int i = 0; i < stations_cap; ++i) {
+	n += sprintf(rendered_screen + n, "| %c WYLACZONY \r\n", (stations_curr == 0) ? '>' : ' ');
+	for (int i = 1; i < stations_cap; ++i) {
 		if (stations[i].expiry_ticks) {
 			n += sprintf(rendered_screen + n,
 					"| %c %d %s\r\n",
 					(stations_curr == i) ? '>' : ' ',
-					i+1,
+					i,
 					stations[i].tune_name);
 		}
 	}
@@ -440,7 +448,11 @@ int main(int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 
-	/* setup buffers */
+	/* setup stations (this at index 0 is a fake one) */
+	memset(stations, 0, sizeof(struct station_desc));
+	stations[0].expiry_ticks = EXPIRY_INFTY;
+
+	/* setup ui clients list */
 	for (int i = 0; i < ui_clients_socks_cap; ++i)
 		ui_clients_socks[i] = NO_SOCK;
 
