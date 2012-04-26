@@ -37,7 +37,7 @@ void recvbuff_init(struct recvbuff *rbuff, const int bsize, const int psize) {
 	rbuff->consistient = 0;
 	rbuff->fseqno = 0;
 }
-// TODO remoember to check against buffer overflow this will
+// TODO remember to check against buffer overflow this will
 // prevent fake station from receiving anything
 
 void recvbuff_free(struct recvbuff *rbuff) {
@@ -50,7 +50,7 @@ int recvbuff_index(struct recvbuff *rbuff, seqno_t seqno) {
 	return i;
 }
 
-char *recvbuff_buf_get(struct recvbuff *rbuff, int index) {
+uint8_t *recvbuff_buf_get(struct recvbuff *rbuff, int index) {
 	if (index < 0 || index > rbuff->capacity)
 		return NULL;
 	else
@@ -70,7 +70,7 @@ void recvbuff_flush(struct recvbuff *rbuff, const int fd, const int pcount) {
 	if (fd >= 0) {
 		for (i = 0; i < pcount; ++i) {
 			struct packet_desc *d = rbuff->map + i;
-			char *data = recvbuff_buf_get(rbuff, i); /* ugly */
+			uint8_t *data = recvbuff_buf_get(rbuff, i); /* ugly */
 			/* write */
 			TRY_SYS(write(fd, data, d->length) == (int) d->length);
 		}
@@ -92,5 +92,6 @@ void recvbuff_flush(struct recvbuff *rbuff, const int fd, const int pcount) {
 	ASSERT(rbuff->end == ncount);
 
 	rbuff->consistient -= pcount;
-	rbuff->fseqno -= pcount;
+	/* first seqno propagates */
+	rbuff->fseqno += pcount;
 }

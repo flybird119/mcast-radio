@@ -49,7 +49,7 @@ seqno_t last_seqno = 0;
 /* if packet in buffer needs to be retransmitted its PROTO_DORETR flag is set */
 
 /* buffered packets */
-char *packets_buf = NULL;
+uint8_t *packets_buf = NULL;
 int packets_buf_cap = 0; /* highest available index */
 int packets_buf_begin = 0; /* first byte index */
 int packets_buf_end = 0; /* next to last byte index */
@@ -232,7 +232,7 @@ int main(int argc, char **argv) {
 	/* initialize packets buffer */
 	packets_buf_cap = fsize / psize + ((fsize % psize) ? 1 : 0);
 	packet_sz = sizeof(struct proto_header) + psize;
-	packets_buf = (char *) malloc(packets_buf_cap * packet_sz);
+	packets_buf = (uint8_t *) malloc(packets_buf_cap * packet_sz);
 
 	{
 		struct sockaddr_in temp_addr;

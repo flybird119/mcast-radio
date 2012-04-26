@@ -31,9 +31,6 @@
 #define RDELAY_FIRST 2
 #define RDELAY_NEXT 2
 
-#define TELNET_KEY_DOWN 4348699
-#define TELNET_KEY_UP 4283163
-
 /* receiver configuration */
 char discover_dotted[ADDR_LEN] = DISCOVER_ADDR;
 in_port_t data_port = DATA_PORT;
@@ -129,9 +126,7 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	socklen_t len = sizeof(addr);
 
 	TRY_SYS(r = recvfrom(sock, buffer, sizeof(buffer), 0, (struct sockaddr *) &addr, &len));
-	fprintf(stderr, "Read smth from %s.\n", inet_ntoa(addr.sin_addr));
 	if (validate_packet(packet, r)) {
-		fprintf(stderr, "Valid packet.\n");
 		/* this should be done via connect() but doesn't work that way */
 		if (addr.sin_addr.s_addr != st->local_addr.sin_addr.s_addr
 				|| addr.sin_port != st->local_addr.sin_port) {
@@ -139,10 +134,9 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 			return;
 		}
 		len_t length = data_length(packet);
-		fprintf(stderr, "Length %d. Declared psize %d.\n", length, packets.psize);
 		if (header_isdata(&packet->header) && length <= packets.psize) {
 			seqno_t seqno = header_seqno(header);
-			fprintf(stderr, "Packet with seqno %d of total length %d.\n",seqno, length);
+			fprintf(stderr, "\nseqno %d total length %d ",seqno, length);
 			/* check if it's a first packet */
 			if (packets.end == 0 && packets.fseqno == 0) {
 				/* we assume that this is the first packet from this station ever */
@@ -150,7 +144,7 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 			}
 			/* copy data */
 			int index = recvbuff_index(&packets, seqno);
-			char *data = recvbuff_buf_get(&packets, index);
+			uint8_t *data = recvbuff_buf_get(&packets, index);
 			struct packet_desc *pdesc = recvbuff_map_get(&packets, index);
 			if (data) {
 				memcpy(data, packet->data, length);
@@ -158,22 +152,43 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 				pdesc->length = length;
 				/* mark packets up to this one as pending retransmission */
 				struct packet_desc *d = recvbuff_map_get(&packets, packets.end);
-				/* we start from end, none of these packets had been known to receiver before */
+				/* we start from end, none of these packets had been known to receiver before,
+				 * so we should threat thema as before first retransmission */
+				fprintf(stderr, "at %d ", index);
+				ASSERT((d) && (pdesc));
 				while(d < pdesc) { /* implied range checking */
 					if (d->length == 0) {
 						/* proper delay */
 						d->rdelay = RDELAY_FIRST;
 						d->rcount = RCOUNT_MAX;
-						d->length = 0;
 					}
 					/* next */
 					++d;
 				}
 				/* update end */
-				if (packets.end < index)
-					packets.end = index;
+				if (packets.end <= index)
+					packets.end = index + 1;
+				fprintf(stderr, "end at %d ", packets.end);
+				/* update consistient - we might have filled up one small hole */
+				while (packets.consistient < packets.end) {
+					struct packet_desc *d = recvbuff_map_get(&packets, packets.consistient);
+					if (d->length == 0) {
+						break;
+					}
+					++packets.consistient;
+				}
+				fprintf(stderr, "consistient at %d\n", packets.consistient);
 			}
 			/* else: seqno out of range */
+
+			/* flush buffer depending on policy */
+			if (packets.consistient * 100 >= packets.capacity * FLUSH_THRESH) {
+				/* threshold exceeded */
+				recvbuff_flush(&packets, 1, packets.consistient);
+			} else if (packets.end >= packets.capacity - 1) {
+				/* we're running out of place in buffer */
+				recvbuff_flush(&packets, -1, packets.end);
+			}
 		}
 		/* else: ignore packet */
 	} 
@@ -210,6 +225,8 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 			if (pdesc->rdelay == 0) {
 				if (pdesc->rcount > 0) {
 					pdesc->rcount--;
+					/* set proper delay */
+					pdesc->rdelay = RDELAY_NEXT;
 					/* send request */
 					struct proto_packet packet;
 					struct station_desc *st = stations_list_current(&stations);
@@ -257,15 +274,17 @@ void discover_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	int r = 0;
 	/* remove expired stations */
-	int i;
-	for (i = 0; i < stations.capacity; ++i) {
+	struct station_desc *st;
+	int i = 0;
+	while ((st = stations_list_get(&stations, i)) != NULL) {
 		/* NOTE: EXPIRY_INFTY < 0 */
-		struct station_desc *st = stations_list_get(&stations, i);
 		if (st->expiry_ticks > 0) {
 			st->expiry_ticks--;
 			if (st->expiry_ticks == 0)
 				r++;
 		}
+		/* next */
+		++i;
 	}
 	/* if current station disappears */
 	if (stations_list_current(&stations)->expiry_ticks == 0) {
@@ -338,6 +357,7 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(arg);
 
 	static unsigned char cls_comm[] = {0x1b, '[', '2', 'J'};
+
 	static char rendbuf[16192];
 	static const int rendbufsz = sizeof(rendbuf);
 
@@ -355,18 +375,22 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 
 void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
+
+	static const uint8_t key_up[] = {27, 91, 65};
+	static const uint8_t key_down[] = {27, 91, 66};
+	static uint8_t comm[3];
+
 	struct event *evt = arg;
 
-	int comm = 0;
 	ssize_t r;
 	TRY_SYS(r = read(sock, &comm, sizeof(comm)));
 	if (r) {
-		if (comm == TELNET_KEY_DOWN) {
+		if (memcmp(key_down, comm, SIZEOF(comm)) == 0) {
 			if (next_station(&stations)) {
 				current_station_connect(&stations);
 				event_active(refresh_ui_evt, 0, 0);
 			}
-		} else if (comm == TELNET_KEY_UP) {
+		} else if (memcmp(key_up, comm, SIZEOF(comm)) == 0) {
 			if (prev_station(&stations)) {
 				current_station_connect(&stations);
 				event_active(refresh_ui_evt, 0, 0);
@@ -407,13 +431,13 @@ void ui_new_client_cb(struct evconnlistener *listener, evutil_socket_t sock,
 	}
 
 	/* force character mode */
-	static unsigned char mode[] = {255, 251, 1, 255, 251, 3, 255, 252, 34};
-	EXPECT(write(sock, mode, SIZEOF(mode)) == SIZEOF(mode),
+	static unsigned char comms[] = {255, 251, 1, 255, 251, 3, 255, 252, 34};
+	EXPECT(write(sock, comms, SIZEOF(comms)) == SIZEOF(comms),
 			"Setting character mode of remote terminal failed.");
 	/* we might read all the crap that telnet sent us in response,
 	 * but we'll skip it in event callback eitherway
 	 * if client really can't change to character mode we really
-	 * can't do much more than just ask it */
+	 * can't do much more than just ask to do it */
 
 	/* create event for new connection */
 	struct event *new_evt = malloc(event_get_struct_event_size());
