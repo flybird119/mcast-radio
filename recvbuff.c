@@ -15,22 +15,30 @@ void packet_desc_init(struct packet_desc *desc) {
 	desc->length = 0; /* invalid packet */
 }
 
-void recvbuff_init(struct recvbuff *rbuff, int bsize, int psize) {
-	ASSERT(bsize > 0 && psize > 0);
+void recvbuff_init(struct recvbuff *rbuff, const int bsize, const int psize) {
+	ASSERT(bsize > 0 && psize >= 0);
 
-	rbuff->buff = realloc(rbuff->buff, bsize);
+	if (psize > 0) {
+		rbuff->buff = realloc(rbuff->buff, bsize);
+
+		rbuff->capacity = bsize / psize + ((bsize % psize == 0) ? 1 : 0);
+		rbuff->map = realloc(rbuff->map, sizeof(struct packet_desc) * rbuff->capacity);
+
+		for (int i = 0; i < rbuff->capacity; ++i) {
+			packet_desc_init(rbuff->map + i);
+		}
+	} else {
+		rbuff->capacity = 0;
+	}
+
 	rbuff->psize = psize;
 
-	rbuff->capacity = bsize / psize + ((bsize % psize == 0) ? 1 : 0);
-	rbuff->map = realloc(rbuff->map, sizeof(struct packet_desc) * rbuff->capacity);
 	rbuff->end = 0;
 	rbuff->consistient = 0;
 	rbuff->fseqno = 0;
-
-	for (int i = 0; i < rbuff->capacity; ++i) {
-		packet_desc_init(rbuff->map + i);
-	}
 }
+// TODO remoember to check against buffer overflow this will
+// prevent fake station from receiving anything
 
 void recvbuff_free(struct recvbuff *rbuff) {
 	free(rbuff->buff);

@@ -51,9 +51,6 @@ struct proto_packet {
 	char data[];
 };
 
-/* NOTE: version has one byte so it's byte order agnostic */
-#define check_version(header) ((header)->version == PROTO_VERSION)
-
 void header_init(struct proto_header *header, seqno_t seqno, len_t len, flags_t flags);
 void ident_init(struct proto_ident *ident, seqno_t seqno, flags_t flags, len_t psize);
 
@@ -68,6 +65,11 @@ len_t data_length(struct proto_packet *packet);
 
 len_t ident_psize(struct proto_ident *packet);
 
+char validate_header(struct proto_header *header);
+char validate_packet(struct proto_packet *packet, ssize_t rlen);
 
+char header_isident(struct proto_header *header);
+char header_isempty(struct proto_header *header);
+char header_isdata(struct proto_header *header);
 
 #endif /* __PROTO_H */

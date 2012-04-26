@@ -74,7 +74,7 @@ void current_station_connect(struct stations_list *list) {
 
 	if (st->expiry_ticks) {
 		/* reinit buffers */
-		// packets_buf_init(st->psize); // TODO fake station psize == 0
+		recvbuff_init(&packets, bsize, st->psize);
 
 		/* change mcast_sock multicast group membership */
 		/* remove from old group */
@@ -130,7 +130,8 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	TRY_SYS(r = recvfrom(sock, buffer, sizeof(buffer), 0, (struct sockaddr *) &addr, &len));
 	fprintf(stderr, "Read smth from %s.\n", inet_ntoa(addr.sin_addr));
-	if (r && r == (int) packet_length(packet) && check_version(header)) {
+	if (validate_packet(packet, r)) {
+		fprintf(stderr, "Valid packet.\n");
 		/* this should be done via connect() but doesn't work that way */
 		if (addr.sin_addr.s_addr != st->local_addr.sin_addr.s_addr
 				|| addr.sin_port != st->local_addr.sin_port) {
@@ -138,7 +139,8 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 			return;
 		}
 		len_t length = data_length(packet);
-		if (header_flag_isset(header, PROTO_DATA) && length <= packets.psize) {
+		fprintf(stderr, "Length %d. Declared psize %d.\n", length, packets.psize);
+		if (header_isdata(&packet->header) && length <= packets.psize) {
 			seqno_t seqno = header_seqno(header);
 			fprintf(stderr, "Packet with seqno %d of total length %d.\n",seqno, length);
 			/* check if it's a first packet */
@@ -158,14 +160,18 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 				struct packet_desc *d = recvbuff_map_get(&packets, packets.end);
 				/* we start from end, none of these packets had been known to receiver before */
 				while(d < pdesc) { /* implied range checking */
-					/* proper delay */
-					d->rdelay = RDELAY_FIRST;
-					d->rcount = RCOUNT_MAX;
-					d->length = 0;
+					if (d->length == 0) {
+						/* proper delay */
+						d->rdelay = RDELAY_FIRST;
+						d->rcount = RCOUNT_MAX;
+						d->length = 0;
+					}
 					/* next */
 					++d;
-					++packets.end;
 				}
+				/* update end */
+				if (packets.end < index)
+					packets.end = index;
 			}
 			/* else: seqno out of range */
 		}
@@ -285,7 +291,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	TRY_SYS(r = recvfrom(sock, &packet, sizeof(packet), 0,
 				(struct sockaddr *) &addr, &addrlen));
-	if (r && check_version(&packet.header)) {
+	if (validate_packet((struct proto_packet *) &packet, r)) {
 		if (r == sizeof(struct proto_ident) && header_flag_isset(&packet.header, PROTO_IDRESP)) {
 			/* we've got identification response */
 			/* check if already exists */
@@ -306,7 +312,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					ASSERT(dest_tune_name[sizeof(dest_tune_name) - 1] == 0);
 					if (strcmp(st->tune_name, dest_tune_name) == 0)
 						stations_list_set_current(&stations, st);
-						current_station_connect(&stations);
+					current_station_connect(&stations);
 					/* refresh if added */
 					event_active(refresh_ui_evt, 0, 0);
 				}

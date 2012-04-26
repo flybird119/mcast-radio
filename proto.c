@@ -13,7 +13,7 @@ void header_init(struct proto_header *header, seqno_t seqno, len_t len, flags_t 
 void ident_init(struct proto_ident *ident, seqno_t seqno, flags_t flags, len_t psize) {
 	header_init(&ident->header, seqno,
 			(sizeof(struct proto_ident) - sizeof(struct proto_header)), flags);
-	ident->psize = htonl(psize);
+	ident->psize = htons(psize);
 }
 
 seqno_t header_seqno(struct proto_header *header) {
@@ -44,5 +44,26 @@ len_t packet_length(struct proto_packet *packet) {
 }
 
 len_t ident_psize(struct proto_ident *packet) {
-	return ntohl(packet->psize);
+	return ntohs(packet->psize);
+}
+
+/* NOTE: version has one byte so it's byte order agnostic */
+char validate_header(struct proto_header *header) {
+	return header->version == PROTO_VERSION;
+}
+
+char validate_packet(struct proto_packet *packet, ssize_t rlen) {
+	return validate_header(&packet->header) && (ssize_t) packet_length(packet) == rlen;
+}
+
+char header_isident(struct proto_header *header) {
+	return packet_length((struct proto_packet *) header) == sizeof(struct proto_ident) && header_flag_isset(header, PROTO_IDRESP);
+}
+
+char header_isempty(struct proto_header *header) {
+	return packet_length((struct proto_packet *) header) == sizeof(struct proto_header);
+}
+
+char header_isdata(struct proto_header *header) {
+	return header_flag_isset(header, PROTO_DATA | PROTO_DORETR);
 }

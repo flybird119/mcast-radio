@@ -20,6 +20,7 @@ void station_desc_init(struct station_desc *st, struct proto_ident *packet, stru
 	memcpy(&st->ctrl_addr, addr, sizeof(st->ctrl_addr));
 	strncpy(st->tune_name, packet->tune_name, sizeof(st->tune_name) - 1);
 	st->psize = ident_psize(packet);
+	fprintf(stderr, "New stations packet size %d.\n", st->psize);
 }
 
 int stations_equal(struct station_desc *st, struct proto_ident *ident) {
@@ -28,7 +29,7 @@ int stations_equal(struct station_desc *st, struct proto_ident *ident) {
 		&& (memcmp(&st->local_addr, &ident->local_addr, sizeof(st->local_addr)) == 0)
 		&& (st->local_addr.sin_addr.s_addr == ident->local_addr.sin_addr.s_addr)
 		&& (strcmp(st->tune_name, ident->tune_name) == 0)
-		&& (st->psize = ident_psize(ident));
+		&& (st->psize == ident_psize(ident));
 }
 
 void stations_list_init(struct stations_list *list) {

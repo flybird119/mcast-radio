@@ -137,7 +137,7 @@ void ctrl_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	TRY_SYS(r = recvfrom(sock, &header, sizeof(header), 0,
 				(struct sockaddr *) &addr, &addr_len));
-	if (check_version(&header) && r == sizeof(header)) {
+	if (validate_packet((struct proto_packet *) &header, r) && header_isempty(&header)) {
 		if (header_flag_isset(&header, PROTO_RETQUERY)) {
 			/* mark packet in buffer with PROTO_DORETR flag */
 			seqno_t ask_seqno = header_seqno(&header);
