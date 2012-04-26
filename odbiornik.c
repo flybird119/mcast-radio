@@ -15,17 +15,17 @@
 #include "err.h"
 #include "common.h"
 #include "proto.h"
+#include "stations.h"
+#include "recvbuff.h"
 
-#define STATIONS_MAX 32
 #define UI_CLIENTS_MAX 32
 #define NO_SOCK -1
 
 #define DISCOVER_BURST_NUM 6
 #define DISCOVER_BURST_TIMEOUT 500
 #define DISCOVER_TIMEOUT 5000
-#define DISCOVER_KICK_THRESH 4
 
-#define EXPIRY_INFTY (-1)
+#define FLUSH_THRESH 75 /* % */
 
 #define RCOUNT_MAX 8
 #define RDELAY_FIRST 2
@@ -63,148 +63,18 @@ struct event *mcast_recv_evt;
 
 struct evconnlistener *ui_listener;
 
-/* receiver state */
 /* received data buffer */
-char *packets_buf = NULL; /* allocate once to bsize */
-len_t packets_buf_psize;
-
-struct packet_desc {
-	char rcount; /* how many times we can ask for this packet */
-	char rdelay; /* delay before next retransmission request (times RTIME) */
-	len_t length; /* length must be > 0 to consider packet as valid */
-};
-
-struct packet_desc *packets_map = NULL;
-int packets_map_cap;
-int packets_map_end;
-int packets_map_end_consistient;
-seqno_t packets_first_seqno;
-// TODO range checking!
-
-void packet_desc_init(struct packet_desc *desc, struct proto_header *header) {
-	if (header) {
-		//TODO
-	} else {
-		desc->rcount = 0;
-		desc->rdelay = 0;
-		desc->length = 0; /* invalid packet */
-	}
-}
-
-void packets_buf_init(int psize) {
-	packets_buf_psize = psize;
-
-	packets_map_cap = bsize / psize + ((bsize % psize == 0) ? 1 : 0);
-	packets_map = realloc(packets_map, sizeof(struct packet_desc) * packets_map_cap);
-	packets_map_end = 0;
-	packets_map_end_consistient = 0;
-
-	packets_first_seqno = 0;
-
-	for (int i = 0; i < packets_map_cap; ++i) {
-		packet_desc_init(packets_map + i, NULL);
-	}
-}
-
-char *packets_buf_get(seqno_t seqno) {
-	int i = seqno - packets_first_seqno;
-	if (i < 0 || i > packets_map_cap)
-		return NULL;
-	else
-		return packets_buf + i * (int) packets_buf_psize;
-}
-
-struct packet_desc *packets_map_get(seqno_t seqno) {
-	int i = seqno - packets_first_seqno;
-	if (i < 0 || i > packets_map_cap)
-		return NULL;
-	else
-		return packets_map + i;
-}
-
-void packets_flush(const int fd, const int pcount) {
-	int i;
-	// TODO check
-	/* write pcount packets from beginning of the buffer to file descriptor fd */
-	if (fd >= 0) {
-		for (i = 0; i < pcount; ++i) {
-			struct packet_desc *d = packets_map + i;
-			char *data = packets_buf_get(packets_first_seqno + i); /* ugly */
-			/* write */
-			TRY_SYS(write(fd, data, d->length) == d->length);
-		}
-	}
-	/* determine how many packets left in buffer */
-	int ncount = packets_map_end - pcount;
-	ASSERT(ncount >= 0);
-	/* shift buffer */
-	memmove(packets_buf, packets_buf + pcount, ncount * packets_buf_psize);
-	/* remove written packets and reinit free slots in packets map */
-	/* move part of packets map */
-	memmove(packets_map, packets_map + pcount, ncount * sizeof(packets_map[0])); /* cut down sizeof usage, please */
-	/* reinit slots after */
-	for (i = ncount; i < packets_map_end; ++i) {
-		packet_desc_init(packets_map + i, NULL);
-	}
-	/* udpate buffer end */
-	packets_map_end -= pcount;
-	ASSERT(packets_map_end == ncount);
-	packets_map_end_consistient -= pcount;
-}
+struct recvbuff packets;
 
 /* stations */
-struct station_desc {
-	char expiry_ticks;
-	struct sockaddr_in mcast_addr;
-	struct sockaddr_in local_addr;
-	struct sockaddr_in ctrl_addr;
-	char tune_name[NAME_LEN];
-	len_t psize;
-};
+struct stations_list stations;
 
-void station_init(struct station_desc *st, struct proto_ident *packet, struct sockaddr_in *addr) {
-	st->expiry_ticks = DISCOVER_KICK_THRESH;
-	memcpy(&st->mcast_addr, &packet->mcast_addr, sizeof(st->mcast_addr));
-	memcpy(&st->local_addr, &packet->local_addr, sizeof(st->local_addr));
-	memcpy(&st->ctrl_addr, addr, sizeof(st->ctrl_addr));
-	strncpy(st->tune_name, packet->tune_name, sizeof(st->tune_name) - 1);
-	st->psize = ident_psize(packet);
-}
-
-int stations_equal(struct station_desc *st, struct proto_ident *ident) {
-	/* compare everything you know */
-	return (memcmp(&st->mcast_addr, &ident->mcast_addr, sizeof(st->mcast_addr)) == 0)
-		&& (memcmp(&st->local_addr, &ident->local_addr, sizeof(st->local_addr)) == 0)
-		&& (st->local_addr.sin_addr.s_addr == ident->local_addr.sin_addr.s_addr)
-		&& (strcmp(st->tune_name, ident->tune_name) == 0)
-		&& (st->psize = ident_psize(ident));
-}
-
-struct station_desc stations[STATIONS_MAX]; /* station at index 0 is only a placeholder */
-int stations_cap = SIZEOF(stations);
-int stations_curr = 0;
-
-struct station_desc* stations_free_slot() {
-	int i;
-	for (i = 0; i < stations_cap; ++i)
-		if (stations[i].expiry_ticks == 0)
-			break;
-	if (i < stations_cap)
-		return (stations + i);
-	else
-		return NULL;
-}
-
-void switch_station(int new_st) {
-	if (stations_curr == new_st)
-		return;
-	stations_curr = new_st;
-
-	struct station_desc* st = stations + stations_curr;
+void current_station_connect(struct stations_list *list) {
+	struct station_desc* st = stations_list_current(list);
 
 	if (st->expiry_ticks) {
 		/* reinit buffers */
-		packets_buf_init(st->psize);
+		// packets_buf_init(st->psize); // TODO fake station psize == 0
 
 		/* change mcast_sock multicast group membership */
 		/* remove from old group */
@@ -226,24 +96,6 @@ void switch_station(int new_st) {
 		}
 		/* ready to listen */
 	}
-}
-
-void next_station() {
-	int i = stations_curr;
-	do {
-		i = (i+1) % stations_cap;
-	} while (stations[i].expiry_ticks == 0 && i != stations_curr);
-	switch_station((i == stations_curr) ? 0 : i);
-}
-
-void prev_station() {
-	int i = stations_curr;
-	do {
-		--i;
-		if (i < 0)
-			i = stations_cap - 1;
-	} while (stations[i].expiry_ticks == 0 && i != stations_curr);
-	switch_station((i == stations_curr) ? 0 : i);
 }
 
 /* ui clients */
@@ -271,6 +123,7 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	ssize_t r = 0;
 	struct proto_packet *packet = (struct proto_packet *) buffer;
 	struct proto_header *header = &packet->header;
+	struct station_desc *st = stations_list_current(&stations);
 
 	struct sockaddr_in addr;
 	socklen_t len = sizeof(addr);
@@ -279,28 +132,30 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	fprintf(stderr, "Read smth from %s.\n", inet_ntoa(addr.sin_addr));
 	if (r && r == (int) packet_length(packet) && check_version(header)) {
 		/* this should be done via connect() but doesn't work that way */
-		if (addr.sin_addr.s_addr != stations[stations_curr].local_addr.sin_addr.s_addr) {
+		if (addr.sin_addr.s_addr != st->local_addr.sin_addr.s_addr
+				|| addr.sin_port != st->local_addr.sin_port) {
 			/* ignore packet */
 			return;
 		}
 		len_t length = data_length(packet);
-		if (header_flag_isset(header, PROTO_DATA) && length <= packets_buf_psize) {
+		if (header_flag_isset(header, PROTO_DATA) && length <= packets.psize) {
 			seqno_t seqno = header_seqno(header);
 			fprintf(stderr, "Packet with seqno %d of total length %d.\n",seqno, length);
 			/* check if it's a first packet */
-			if (packets_map_end == 0 && packets_first_seqno == 0) {
+			if (packets.end == 0 && packets.fseqno == 0) {
 				/* we assume that this is the first packet from this station ever */
-				packets_first_seqno = seqno;
+				packets.fseqno = seqno;
 			}
 			/* copy data */
-			char *data = packets_buf_get(seqno);
-			struct packet_desc *pdesc = packets_map_get(seqno);
+			int index = recvbuff_index(&packets, seqno);
+			char *data = recvbuff_buf_get(&packets, index);
+			struct packet_desc *pdesc = recvbuff_map_get(&packets, index);
 			if (data) {
 				memcpy(data, packet->data, length);
 				/* mark as valid */
 				pdesc->length = length;
 				/* mark packets up to this one as pending retransmission */
-				struct packet_desc *d = packets_map + packets_map_end;
+				struct packet_desc *d = recvbuff_map_get(&packets, packets.end);
 				/* we start from end, none of these packets had been known to receiver before */
 				while(d < pdesc) { /* implied range checking */
 					/* proper delay */
@@ -309,7 +164,7 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					d->length = 0;
 					/* next */
 					++d;
-					++packets_map_end;
+					++packets.end;
 				}
 			}
 			/* else: seqno out of range */
@@ -327,8 +182,8 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 	/* find last dead packet */
 	int last_dead = -1;
 	int dead_count = 0;
-	for (int i = packets_map_end_consistient; i < packets_map_end; ++i) {
-		struct packet_desc *pdesc = packets_map + i;
+	for (int i = packets.consistient; i < packets.end; ++i) {
+		struct packet_desc *pdesc = recvbuff_map_get(&packets, i);
 		if (pdesc->length == 0 && pdesc->rdelay == 0 && pdesc->rcount == 0) {
 			/* dead packet */
 			last_dead = i;
@@ -337,23 +192,23 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 	}
 	/* depending on policy try to flush buffer up to this place or discard */
 	if (dead_count > 0) {
-		packets_flush(-1, last_dead + 1); /* flush including last dead packet */
+		recvbuff_flush(&packets, -1, last_dead + 1); /* flush including last dead packet */
 	}
 
 	/* make retransmission requests */
 	/* if there's no station (fake one), then we haven't got any packets
-	 * and packets_map_end == packets_map_end_consistient */
-	for (int i = packets_map_end_consistient; i < packets_map_end; ++i) {
-		struct packet_desc *pdesc = packets_map + i;
+	 * and packets.end == packets.consistient */
+	for (int i = packets.consistient; i < packets.end; ++i) {
+		struct packet_desc *pdesc = recvbuff_map_get(&packets, i);
 		if (pdesc->length == 0) {
 			if (pdesc->rdelay == 0) {
 				if (pdesc->rcount > 0) {
 					pdesc->rcount--;
 					/* send request */
 					struct proto_packet packet;
-					struct station_desc *st = stations + stations_curr;
+					struct station_desc *st = stations_list_current(&stations);
 
-					header_init(&packet.header, packets_first_seqno + i, 0, PROTO_RETQUERY);
+					header_init(&packet.header, packets.fseqno + i, 0, PROTO_RETQUERY);
 					EXPECT(sendto(ctrl_sock, &packet, packet_length(&packet), 0, (struct sockaddr *)
 								&st->ctrl_addr, sizeof(st->ctrl_addr)) == (int) packet_length(&packet),
 							"Sending retransmission request failed.\n");
@@ -397,17 +252,20 @@ void discover_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 	int r = 0;
 	/* remove expired stations */
 	int i;
-	for (i = 0; i < stations_cap; ++i) {
+	for (i = 0; i < stations.capacity; ++i) {
 		/* NOTE: EXPIRY_INFTY < 0 */
-		if (stations[i].expiry_ticks > 0) {
-			stations[i].expiry_ticks--;
-			if (stations[i].expiry_ticks == 0)
+		struct station_desc *st = stations_list_get(&stations, i);
+		if (st->expiry_ticks > 0) {
+			st->expiry_ticks--;
+			if (st->expiry_ticks == 0)
 				r++;
 		}
 	}
 	/* if current station disappears */
-	if (stations[stations_curr].expiry_ticks == 0) {
-		next_station();
+	if (stations_list_current(&stations)->expiry_ticks == 0) {
+		if (next_station(&stations)) {
+			current_station_connect(&stations);
+		}
 		r++;
 	}
 
@@ -431,26 +289,24 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 		if (r == sizeof(struct proto_ident) && header_flag_isset(&packet.header, PROTO_IDRESP)) {
 			/* we've got identification response */
 			/* check if already exists */
-			int i;
-			for (i = 0; i < stations_cap; ++i)
-				if (stations[i].expiry_ticks && stations_equal(stations + i, &packet))
-					break;
-			if (i < stations_cap) {
+			struct station_desc *oldst = stations_list_find(&stations, &packet);
+			if (oldst) {
 				/* reset station */
-				stations[i].expiry_ticks = DISCOVER_KICK_THRESH;
+				oldst->expiry_ticks = DISCOVER_KICK_THRESH;
 			} else {
 				/* add new station */
-				struct station_desc *st = stations_free_slot();
+				struct station_desc *st = stations_list_new(&stations);
 				/* if found free slot */
 				if (st) {
 					/* init station */
-					station_init(st, &packet, &addr);
+					station_desc_init(st, &packet, &addr);
 
 					/* check if we're waiting for this station (and switch if so) */
 					ASSERT(sizeof(dest_tune_name) == sizeof(st->tune_name));
 					ASSERT(dest_tune_name[sizeof(dest_tune_name) - 1] == 0);
 					if (strcmp(st->tune_name, dest_tune_name) == 0)
-						switch_station(st-stations);
+						stations_list_set_current(&stations, st);
+						current_station_connect(&stations);
 					/* refresh if added */
 					event_active(refresh_ui_evt, 0, 0);
 				}
@@ -458,8 +314,8 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 		} else if (r == sizeof(struct proto_header) && header_flag_isset(&packet.header, PROTO_FAIL)) {
 			/* we've been notified that retransmission failed */
 			fprintf(stderr, "Retransmission of packet %d failed.\n", header_seqno(&packet.header));
-			/* find packet in packets_map and set rcount = rdelay = 0 */
-			struct packet_desc *pdesc = packets_map_get(header_seqno(&packet.header));
+			/* find packet in packets.map and set rcount = rdelay = 0 */
+			struct packet_desc *pdesc = recvbuff_map_get(&packets, recvbuff_index(&packets, header_seqno(&packet.header)));
 			if (pdesc) {
 				pdesc->rcount = pdesc->rdelay = 0;
 				/* NOTE: we're leavind decision what to do with buffer until rtime timeout */
@@ -479,38 +335,7 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 	static char rendbuf[16192];
 	static const int rendbufsz = sizeof(rendbuf);
 
-	int n = 0;
-	n += snprintf(rendbuf + n, rendbufsz - n, "+------------------------------Znalezione stacje:------------------------------+\r\n|\r\n");
-	/* print stations list */
-	n += snprintf(rendbuf + n, rendbufsz - n, "| %c WYLACZONY \r\n", (stations_curr == 0) ? '>' : ' ');
-	for (int i = 1; i < stations_cap; ++i) {
-		struct station_desc *st = stations + i;
-		if (st->expiry_ticks) {
-			n += snprintf(rendbuf + n, rendbufsz - n,
-					"| %c %d %s\r\n",
-					(stations_curr == i) ? '>' : ' ',
-					i,
-					st->tune_name);
-			/* additional info for current station */
-			if (stations_curr == i) {
-				n += snprintf(rendbuf + n, rendbufsz - n,
-						"|\t psize %d \t\t\t local %s:%d\r\n",
-						st->psize,
-						inet_ntoa(st->local_addr.sin_addr),
-						ntohs(st->local_addr.sin_port));
-				n += snprintf(rendbuf + n, rendbufsz - n,
-						"|\t mcast %s:%d ",
-						inet_ntoa(st->mcast_addr.sin_addr),
-						ntohs(st->mcast_addr.sin_port));
-				n += snprintf(rendbuf + n, rendbufsz - n,
-						"\t ctrl %s:%d\r\n",
-						inet_ntoa(st->ctrl_addr.sin_addr),
-						ntohs(st->ctrl_addr.sin_port));
-			}
-		}
-	}
-	n += snprintf(rendbuf + n, rendbufsz - n, "+------------------------------------------------------------------------------+\r\n");
-
+	int n = stations_list_render(&stations, rendbuf, rendbufsz);
 	/* send to each client */
 	for (int i = 0; i < ui_clients_socks_cap; ++i) {
 		if (ui_clients_socks[i] != NO_SOCK) {
@@ -531,11 +356,15 @@ void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
 	TRY_SYS(r = read(sock, &comm, sizeof(comm)));
 	if (r) {
 		if (comm == TELNET_KEY_DOWN) {
-			next_station();
-			event_active(refresh_ui_evt, 0, 0);
+			if (next_station(&stations)) {
+				current_station_connect(&stations);
+				event_active(refresh_ui_evt, 0, 0);
+			}
 		} else if (comm == TELNET_KEY_UP) {
-			prev_station();
-			event_active(refresh_ui_evt, 0, 0);
+			if (prev_station(&stations)) {
+				current_station_connect(&stations);
+				event_active(refresh_ui_evt, 0, 0);
+			}
 		}
 		/* else: unrecognized option */
 	} else {
@@ -636,12 +465,8 @@ int main(int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 
-	/* alloc data buffer */
-	packets_buf = malloc(bsize);
-
-	/* setup stations (this at index 0 is a fake one) */
-	memset(stations, 0, sizeof(struct station_desc));
-	stations[0].expiry_ticks = EXPIRY_INFTY;
+	/* setup stations */
+	stations_list_init(&stations);
 
 	/* setup ui clients list */
 	for (int i = 0; i < ui_clients_socks_cap; ++i)
@@ -720,8 +545,7 @@ int main(int argc, char **argv) {
 	close(ctrl_sock);
 	close(mcast_sock);
 
-	free(packets_buf);
-	free(packets_map);
+	recvbuff_free(&packets);
 
 	exit(EXIT_SUCCESS);
 }
