@@ -10,9 +10,10 @@ void header_init(struct proto_header *header, seqno_t seqno, len_t len, flags_t 
 	header->version = PROTO_VERSION;
 }
 
-void header_ident_init(struct proto_header *header, seqno_t seqno, flags_t flags) {
-	header_init(header, seqno, 0, flags);
-	header->length = sizeof(struct proto_ident);
+void ident_init(struct proto_ident *ident, seqno_t seqno, flags_t flags, len_t psize) {
+	header_init(&ident->header, seqno,
+			(sizeof(struct proto_ident) - sizeof(struct proto_header)), flags);
+	ident->psize = htonl(psize);
 }
 
 seqno_t header_seqno(struct proto_header *header) {
@@ -34,6 +35,14 @@ void header_flag_clear(struct proto_header *header, flags_t flag) {
 	header->flags &= ~flag;
 }
 
+len_t data_length(struct proto_packet *packet) {
+	return ntohl(packet->header.length);
+}
+
 len_t packet_length(struct proto_packet *packet) {
-	return sizeof(packet->header) + ntohl(packet->header.length);
+	return sizeof(packet->header) + data_length(packet);
+}
+
+len_t ident_psize(struct proto_ident *packet) {
+	return ntohl(packet->psize);
 }

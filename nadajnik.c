@@ -138,7 +138,7 @@ void ctrl_cb(evutil_socket_t sock, short ev, void *arg) {
 	TRY_SYS(r = recvfrom(sock, &header, sizeof(header), 0,
 				(struct sockaddr *) &addr, &addr_len));
 	if (check_version(&header) && r == sizeof(header)) {
-		if (header_flag_isset(&header, PROTO_RETRANSM)) {
+		if (header_flag_isset(&header, PROTO_RETQUERY)) {
 			/* mark packet in buffer with PROTO_DORETR flag */
 			seqno_t ask_seqno = header_seqno(&header);
 			struct proto_packet *pack = packets_buf_get(ask_seqno);
@@ -202,7 +202,7 @@ int main(int argc, char **argv) {
 				break;
 			case 'p':
 				psize = atoi(optarg);
-				if (psize <= 0)
+				if (psize <= 0 || psize > (int) PROTO_MAX_DATA)
 					errflg++;
 				break;
 			case 'f':
@@ -225,7 +225,7 @@ int main(int argc, char **argv) {
 	}
 
 	if (errflg) {
-		fprintf(stderr, "Usage: %s ... \n", argv[0]); // TODO
+		fprintf(stderr, "Error parsing parameters.\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -259,7 +259,7 @@ int main(int argc, char **argv) {
 		socklen_t addr_len = sizeof(temp_addr);
 		TRY_SYS(getsockname(mcast_sock, (struct sockaddr *) &temp_addr, &addr_len));
 
-		header_ident_init(&pack_my_ident.header, 0, PROTO_IDRESP);
+		ident_init(&pack_my_ident, 0, PROTO_IDRESP, psize);
 		memcpy(&pack_my_ident.mcast_addr, &mcast_addr, sizeof(pack_my_ident.mcast_addr));
 		memcpy(&pack_my_ident.local_addr, &temp_addr, sizeof(pack_my_ident.local_addr));
 		strncpy(pack_my_ident.app_name, argv[0], sizeof(pack_my_ident.app_name) - 1);
