@@ -14,6 +14,7 @@
 #include "err.h"
 #include "common.h"
 #include "proto.h"
+#include "sendbuff.h"
 
 #define MAX_PENDING_RET 1<<16
 
@@ -49,40 +50,7 @@ seqno_t last_seqno = 0;
 /* if packet in buffer needs to be retransmitted its PROTO_DORETR flag is set */
 
 /* buffered packets */
-uint8_t *packets_buf = NULL;
-int packets_buf_cap = 0; /* highest available index */
-int packets_buf_begin = 0; /* first byte index */
-int packets_buf_end = 0; /* next to last byte index */
-int packet_sz = 0; /* bytes */
-
-struct proto_packet * packets_buf_get(const seqno_t seqno) {
-	if (packets_buf_begin == packets_buf_end)
-		return NULL;
-	struct proto_header *header =
-		(struct proto_header *) (packets_buf + packets_buf_begin * packet_sz);
-	int index = seqno - header_seqno(header);
-	if (index < 0)
-		return NULL;
-	index = (packets_buf_begin + index) % packets_buf_cap;
-	header = (struct proto_header *) (packets_buf + index * packet_sz);
-	if (seqno != header_seqno(header))
-		return NULL;
-	return (struct proto_packet *) header;
-}
-
-struct proto_packet * packets_buf_back() {
-	return (struct proto_packet *) (packets_buf + packets_buf_end * packet_sz);
-}
-
-void packets_buf_next() {
-	++packets_buf_end;
-	if (packets_buf_end == packets_buf_begin) {
-		/* won't fire first time, when buffer size is 1 */
-		++packets_buf_begin;
-		packets_buf_begin %= packets_buf_cap;
-	}
-	packets_buf_end %= packets_buf_cap;
-}
+struct sendbuff packets;
 
 /* callbacks */
 void stdin_cb(evutil_socket_t sock, short ev, void *arg) {
@@ -91,7 +59,7 @@ void stdin_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	static ssize_t len = 0, r = 0;
 
-	struct proto_packet *packet = packets_buf_back();
+	struct proto_packet *packet = sendbuff_back(&packets);
 	struct proto_header *header = &packet->header;
 
 	TRY_SYS(r = read(sock, packet->data + len, psize - len));
@@ -100,14 +68,14 @@ void stdin_cb(evutil_socket_t sock, short ev, void *arg) {
 		if (len == psize) {
 			/* packet is full, init */
 			header_init(header, last_seqno++, len, PROTO_DATA);
-			ASSERT(psize + (int) sizeof(struct proto_header) == packet_sz);
-			ASSERT(packet_sz == (int) packet_length(packet));
+			ASSERT(psize + (int) sizeof(struct proto_header) == packets.hpsize);
+			ASSERT(packets.hpsize == (int) packet_length(packet));
 			/* send */
-			EXPECT(write(mcast_sock, packet, packet_sz) == packet_sz,
+			EXPECT(write(mcast_sock, packet, packets.hpsize) == packets.hpsize,
 					"Sending streming data failed.");
 			/* start new packet */
 			len = 0;
-			packets_buf_next();
+			sendbuff_next(&packets);
 		}
 	} else {
 		if (len) {
@@ -141,7 +109,7 @@ void ctrl_cb(evutil_socket_t sock, short ev, void *arg) {
 		if (header_flag_isset(&header, PROTO_RETQUERY)) {
 			/* mark packet in buffer with PROTO_DORETR flag */
 			seqno_t ask_seqno = header_seqno(&header);
-			struct proto_packet *pack = packets_buf_get(ask_seqno);
+			struct proto_packet *pack = sendbuff_getseqno(&packets, ask_seqno);
 
 			if (pack) {
 				header_flag_set(&pack->header, PROTO_DORETR);
@@ -169,14 +137,16 @@ void do_retr_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 	UNUSED(arg);
 
-	for (int i = packets_buf_begin; i < packets_buf_end; i = (i+1) % packets_buf_cap) {
-		struct proto_packet *packet = (struct proto_packet*) (packets_buf + i * packet_sz);
-
+	int i = 0;
+	struct proto_packet *packet;
+	while ((packet = sendbuff_getnth(&packets, i)) != NULL) {
 		if (header_flag_isset(&packet->header, PROTO_DORETR)) {
 			header_flag_clear(&packet->header, PROTO_DORETR);
-			EXPECT(write(mcast_sock, packet, packet_sz) == packet_sz,
+			EXPECT(write(mcast_sock, packet, packets.hpsize) == packets.hpsize,
 					"Sending retransmission response failed.");
 		}
+		/* next */
+		++i;
 	}
 }
 
@@ -230,9 +200,7 @@ int main(int argc, char **argv) {
 	}
 
 	/* initialize packets buffer */
-	packets_buf_cap = fsize / psize + ((fsize % psize) ? 1 : 0);
-	packet_sz = sizeof(struct proto_header) + psize;
-	packets_buf = (uint8_t *) malloc(packets_buf_cap * packet_sz);
+	sendbuff_init(&packets, fsize, psize);
 
 	{
 		struct sockaddr_in temp_addr;

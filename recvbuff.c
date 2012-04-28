@@ -21,7 +21,7 @@ void recvbuff_init(struct recvbuff *rbuff, const int bsize, const int psize) {
 	if (psize > 0) {
 		rbuff->buff = realloc(rbuff->buff, bsize);
 
-		rbuff->capacity = bsize / psize + ((bsize % psize == 0) ? 1 : 0);
+		rbuff->capacity = bsize / psize + ((bsize % psize) ? 1 : 0);
 		rbuff->map = realloc(rbuff->map, sizeof(struct packet_desc) * rbuff->capacity);
 
 		for (int i = 0; i < rbuff->capacity; ++i) {
@@ -43,6 +43,9 @@ void recvbuff_init(struct recvbuff *rbuff, const int bsize, const int psize) {
 void recvbuff_free(struct recvbuff *rbuff) {
 	free(rbuff->buff);
 	free(rbuff->map);
+
+	rbuff->buff = NULL;
+	rbuff->map = NULL;
 }
 
 int recvbuff_index(struct recvbuff *rbuff, seqno_t seqno) {
@@ -50,18 +53,18 @@ int recvbuff_index(struct recvbuff *rbuff, seqno_t seqno) {
 	return i;
 }
 
-uint8_t *recvbuff_buf_get(struct recvbuff *rbuff, int index) {
-	if (index < 0 || index > rbuff->capacity)
-		return NULL;
-	else
+uint8_t *recvbuff_buf_get(const struct recvbuff *rbuff, const int index) {
+	if (0 <= index && index < rbuff->capacity)
 		return rbuff->buff + index * (int) rbuff->psize;
+	else
+		return NULL;
 }
 
-struct packet_desc *recvbuff_map_get(struct recvbuff *rbuff, int index) {
-	if (index < 0 || index > rbuff->capacity)
-		return NULL;
-	else
+struct packet_desc *recvbuff_map_get(const struct recvbuff *rbuff, const int index) {
+	if (0 <= index && index < rbuff->capacity)
 		return rbuff->map + index;
+	else
+		return NULL;
 }
 
 void recvbuff_flush(struct recvbuff *rbuff, const int fd, const int pcount) {

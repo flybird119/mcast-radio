@@ -177,7 +177,7 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					}
 					++packets.consistient;
 				}
-				fprintf(stderr, "consistient at %d\n", packets.consistient);
+				fprintf(stderr, "consistient at %d capacity %d\n", packets.consistient, packets.capacity);
 			}
 			/* else: seqno out of range */
 
@@ -382,6 +382,7 @@ void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	struct event *evt = arg;
 
+	// TODO validate client
 	ssize_t r;
 	TRY_SYS(r = read(sock, &comm, sizeof(comm)));
 	if (r) {

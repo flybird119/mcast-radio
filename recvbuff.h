@@ -22,12 +22,12 @@ struct recvbuff {
 	seqno_t fseqno;
 };
 
-void recvbuff_init(struct recvbuff *rbuff, int bsize, int psize);
+void recvbuff_init(struct recvbuff *rbuff, const int bsize, const int psize);
 void recvbuff_free(struct recvbuff *rbuff);
 
 int recvbuff_index(struct recvbuff *rbuff, seqno_t seqno);
-uint8_t *recvbuff_buf_get(struct recvbuff *rbuff, int index);
-struct packet_desc *recvbuff_map_get(struct recvbuff *rbuff, int index);
+uint8_t *recvbuff_buf_get(const struct recvbuff *rbuff, const int index);
+struct packet_desc *recvbuff_map_get(const struct recvbuff *rbuff, const int index);
 
 void recvbuff_flush(struct recvbuff *rbuff, const int fd, const int pcount);
 
