@@ -1,3 +1,4 @@
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,13 @@
 #include "stations.h"
 #include "recvbuff.h"
 #include "clients.h"
+
+// DEBUG
+#define DEBUG
+
+#ifdef DEBUG
+#include "test-loose.h"
+#endif
 
 #define DISCOVER_BURST_NUM 6
 #define DISCOVER_BURST_TIMEOUT 500
@@ -119,6 +127,10 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 			/* ignore packet */
 			return;
 		}
+#ifdef DEBUG
+		if (loose_drop(packet))
+			return;
+#endif
 		len_t length = data_length(packet);
 		if (header_isdata(&packet->header) && length <= packets.psize) {
 			seqno_t seqno = header_seqno(header);
@@ -555,6 +567,10 @@ int main(int argc, char **argv) {
 	TRY_TRUE(rtime_evt = event_new(base, -1, EV_TIMEOUT|EV_PERSIST, rtime_timeout_cb, NULL));
 	struct timeval rtime_tv = {(rtime / 1000), 1000*(rtime % 1000)};
 	TRY_SYS(event_add(rtime_evt, &rtime_tv));
+
+#ifdef DEBUG
+	loose_init(base);
+#endif
 
 	/* dispatcher loop */
 	TRY_SYS(event_base_dispatch(base));
