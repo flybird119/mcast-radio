@@ -5,7 +5,7 @@
 /* NOTE: version has one byte so it's byte order agnostic */
 void header_init(struct proto_header *header, seqno_t seqno, len_t len, flags_t flags) {
 	header->seqno = htonl(seqno);
-	header->length = htonl(len);
+	header->length = htons(len);
 	header->flags = flags;
 	header->version = PROTO_VERSION;
 }
@@ -36,7 +36,7 @@ void header_flag_clear(struct proto_header *header, flags_t flag) {
 }
 
 len_t data_length(struct proto_packet *packet) {
-	return ntohl(packet->header.length);
+	return ntohs(packet->header.length);
 }
 
 len_t packet_length(struct proto_packet *packet) {

@@ -1,4 +1,3 @@
-
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,10 +19,10 @@
 #include "recvbuff.h"
 #include "clients.h"
 
-// DEBUG
-#define DEBUG
+// DEBUG_FLAG
+#define DEBUG_FLAG
 
-#ifdef DEBUG
+#ifdef DEBUG_FLAG
 #include "test-loose.h"
 #endif
 
@@ -34,7 +33,7 @@
 #define FLUSH_THRESH 75 /* % */
 
 #define RCOUNT_MAX 8
-#define RDELAY_FIRST 2
+#define RDELAY_FIRST 1
 #define RDELAY_NEXT 2
 
 /* receiver configuration */
@@ -95,7 +94,9 @@ void current_station_connect(struct stations_list *list) {
 			/* the following doesn't work one would expect, we have to manually check
 			 * address got from recvfrom() and compare with current station */
 			/* TRY_SYS(connect(mcast_sock, (struct sockaddr *) &st->local_addr, sizeof(st->local_addr))); */
+#ifdef DEBUG_FLAG
 			fprintf(stderr, "Connected %s:%d.\n", inet_ntoa(st->local_addr.sin_addr), ntohs(st->local_addr.sin_port));
+#endif
 		}
 		/* ready to listen */
 	}
@@ -127,14 +128,13 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 			/* ignore packet */
 			return;
 		}
-#ifdef DEBUG
+#ifdef DEBUG_FLAG
 		if (loose_drop(packet))
 			return;
 #endif
 		len_t length = data_length(packet);
 		if (header_isdata(&packet->header) && length <= packets.psize) {
 			seqno_t seqno = header_seqno(header);
-			fprintf(stderr, "\nseqno %d total length %d ",seqno, length);
 			/* check if it's a first packet */
 			if (packets.end == 0 && packets.fseqno == 0) {
 				/* we assume that this is the first packet from this station ever */
@@ -152,7 +152,6 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 				struct packet_desc *d = recvbuff_map_get(&packets, packets.end);
 				/* we start from end, none of these packets had been known to receiver before,
 				 * so we should threat thema as before first retransmission */
-				fprintf(stderr, "at %d ", index);
 				ASSERT((d) && (pdesc));
 				while(d < pdesc) { /* implied range checking */
 					if (d->length == 0) {
@@ -166,7 +165,6 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 				/* update end */
 				if (packets.end <= index)
 					packets.end = index + 1;
-				fprintf(stderr, "end at %d ", packets.end);
 				/* update consistient - we might have filled up one small hole */
 				while (packets.consistient < packets.end) {
 					struct packet_desc *d = recvbuff_map_get(&packets, packets.consistient);
@@ -175,7 +173,10 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					}
 					++packets.consistient;
 				}
-				fprintf(stderr, "consistient at %d capacity %d\n", packets.consistient, packets.capacity);
+#ifdef DEBUG_FLAG
+				fprintf(stderr, "\nPacket seqno %d length %d index %d consistient %d end %d capacity %d\n",
+						seqno, data_length(packet), index, packets.consistient, packets.end, packets.capacity);
+#endif
 			}
 			/* else: seqno out of range */
 
@@ -309,7 +310,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	TRY_SYS(r = recvfrom(sock, &packet, sizeof(packet), 0,
 				(struct sockaddr *) &addr, &addrlen));
 	if (validate_packet((struct proto_packet *) &packet, r)) {
-		if (r == sizeof(struct proto_ident) && header_flag_isset(&packet.header, PROTO_IDRESP)) {
+		if (header_isident(&packet.header)) {
 			/* we've got identification response */
 			/* check if already exists */
 			struct station_desc *oldst = stations_list_find(&stations, &packet);
@@ -334,9 +335,12 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					event_active(refresh_ui_evt, 0, 0);
 				}
 			}
-		} else if (r == sizeof(struct proto_header) && header_flag_isset(&packet.header, PROTO_FAIL)) {
+		} else if (header_isempty(&packet.header)
+				&& header_flag_isset(&packet.header, PROTO_FAIL)) {
 			/* we've been notified that retransmission failed */
+#ifdef DEBUG_FLAG
 			fprintf(stderr, "Retransmission of packet %d failed.\n", header_seqno(&packet.header));
+#endif
 			/* find packet in packets.map and set rcount = rdelay = 0 */
 			struct packet_desc *pdesc = recvbuff_map_get(&packets, recvbuff_index(&packets, header_seqno(&packet.header)));
 			if (pdesc) {
@@ -568,7 +572,7 @@ int main(int argc, char **argv) {
 	struct timeval rtime_tv = {(rtime / 1000), 1000*(rtime % 1000)};
 	TRY_SYS(event_add(rtime_evt, &rtime_tv));
 
-#ifdef DEBUG
+#ifdef DEBUG_FLAG
 	loose_init(base);
 #endif
 

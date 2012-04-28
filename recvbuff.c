@@ -37,8 +37,6 @@ void recvbuff_init(struct recvbuff *rbuff, const int bsize, const int psize) {
 	rbuff->consistient = 0;
 	rbuff->fseqno = 0;
 }
-// TODO remember to check against buffer overflow this will
-// prevent fake station from receiving anything
 
 void recvbuff_free(struct recvbuff *rbuff) {
 	free(rbuff->buff);
@@ -72,8 +70,8 @@ void recvbuff_flush(struct recvbuff *rbuff, const int fd, const int pcount) {
 	/* write pcount packets from beginning of the buffer to file descriptor fd */
 	if (fd >= 0) {
 		for (i = 0; i < pcount; ++i) {
-			struct packet_desc *d = rbuff->map + i;
-			uint8_t *data = recvbuff_buf_get(rbuff, i); /* ugly */
+			struct packet_desc *d = recvbuff_map_get(rbuff, i);
+			uint8_t *data = recvbuff_buf_get(rbuff, i);
 			/* write */
 			TRY_SYS(write(fd, data, d->length) == (int) d->length);
 		}
@@ -94,7 +92,10 @@ void recvbuff_flush(struct recvbuff *rbuff, const int fd, const int pcount) {
 	rbuff->end -= pcount;
 	ASSERT(rbuff->end == ncount);
 
+	/* max(0, consistient - pcount) */
 	rbuff->consistient -= pcount;
+	if (rbuff->consistient < 0)
+		rbuff->consistient = 0;
 	/* first seqno propagates */
 	rbuff->fseqno += pcount;
 }

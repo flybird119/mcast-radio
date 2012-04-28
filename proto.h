@@ -5,11 +5,6 @@
 
 #include "common.h"
 
-// TODO docs
-// TODO make docs compilant
-// TODO check version
-// TODO macros for checking type
-
 #define PROTO_VERSION 1
 
 #define PROTO_RETQUERY 0x1
@@ -19,8 +14,9 @@
 #define PROTO_FAIL 0xF
 #define PROTO_DORETR 0x10
 
+/* NOTE: changing these values imply changing hton[sl] macros in proto.c */
 typedef uint32_t seqno_t;
-typedef uint32_t len_t;
+typedef uint16_t len_t;
 typedef uint8_t flags_t; /* byte order agnostic */
 
 struct proto_header {
@@ -29,7 +25,7 @@ struct proto_header {
 	flags_t flags;
 	uint8_t  version;
 
-	uint16_t __padding; /* padding */
+	uint8_t __padding; /* padding */
 }__attribute__((packed));
 
 #define PROTO_MAX_PACKET (1<<15)
