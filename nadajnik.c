@@ -260,5 +260,7 @@ int main(int argc, char **argv) {
 	event_base_free(base);
 	close(mcast_sock);
 
+	sendbuff_free(&packets);
+
 	exit(EXIT_SUCCESS);
 }

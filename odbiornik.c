@@ -17,9 +17,7 @@
 #include "proto.h"
 #include "stations.h"
 #include "recvbuff.h"
-
-#define UI_CLIENTS_MAX 32
-#define NO_SOCK -1
+#include "clients.h"
 
 #define DISCOVER_BURST_NUM 6
 #define DISCOVER_BURST_TIMEOUT 500
@@ -96,19 +94,7 @@ void current_station_connect(struct stations_list *list) {
 }
 
 /* ui clients */
-int ui_clients_socks[UI_CLIENTS_MAX]; /* must be initialized */
-int ui_clients_socks_cap = SIZEOF(ui_clients_socks);
-
-int *ui_clients_free_slot() {
-	int i;
-	for (i = 0; i < ui_clients_socks_cap; ++i)
-		if (ui_clients_socks[i] == NO_SOCK)
-			break;
-	if (i < ui_clients_socks_cap)
-		return (ui_clients_socks + i);
-	else
-		return NULL;
-}
+struct clients_list ui_clients;
 
 /* callbacks */
 void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
@@ -363,12 +349,13 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 
 	int n = stations_list_render(&stations, rendbuf, rendbufsz);
 	/* send to each client */
-	for (int i = 0; i < ui_clients_socks_cap; ++i) {
-		if (ui_clients_socks[i] != NO_SOCK) {
+	for (int i = 0; i < ui_clients.capacity; ++i) {
+		struct client *cl = ui_clients.list + i;
+		if (!client_isempty(cl)) {
 			/* clean screen */
-			EXPECT(write(ui_clients_socks[i], cls_comm, SIZEOF(cls_comm)) == SIZEOF(cls_comm),
+			EXPECT(write(cl->sock, cls_comm, SIZEOF(cls_comm)) == SIZEOF(cls_comm),
 					"Clearing remote screen failed.");
-			TRY_TRUE(write(ui_clients_socks[i], rendbuf, n) == n);
+			TRY_TRUE(write(cl->sock, rendbuf, n) == n);
 		}
 	}
 }
@@ -376,25 +363,40 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 
+	static const uint8_t ready1[] = {255, 253, 1};
+	static const uint8_t ready2[] = {255, 253, 3};
 	static const uint8_t key_up[] = {27, 91, 65};
 	static const uint8_t key_down[] = {27, 91, 66};
 	static uint8_t comm[3];
 
 	struct event *evt = arg;
+	struct client *cl = clients_list_find(&ui_clients, sock);
 
-	// TODO validate client
 	ssize_t r;
 	TRY_SYS(r = read(sock, &comm, sizeof(comm)));
 	if (r) {
-		if (memcmp(key_down, comm, SIZEOF(comm)) == 0) {
-			if (next_station(&stations)) {
-				current_station_connect(&stations);
-				event_active(refresh_ui_evt, 0, 0);
+		if (client_isready(cl)) {
+			if (memcmp(key_down, comm, SIZEOF(comm)) == 0) {
+				if (next_station(&stations)) {
+					current_station_connect(&stations);
+					event_active(refresh_ui_evt, 0, 0);
+				}
+			} else if (memcmp(key_up, comm, SIZEOF(comm)) == 0) {
+				if (prev_station(&stations)) {
+					current_station_connect(&stations);
+					event_active(refresh_ui_evt, 0, 0);
+				}
 			}
-		} else if (memcmp(key_up, comm, SIZEOF(comm)) == 0) {
-			if (prev_station(&stations)) {
-				current_station_connect(&stations);
-				event_active(refresh_ui_evt, 0, 0);
+		} else {
+			if (memcmp(ready1, comm, SIZEOF(comm)) == 0) {
+				cl->state |= STATE_READY1;
+			} else if (memcmp(ready2, comm, SIZEOF(comm)) == 0) {
+				cl->state |= STATE_READY2;
+			} else {
+				static char msg[] = "Character mode disabled, you must confirm each command with Enter.\n\r\n\r";
+				EXPECT(write(sock, msg, SIZEOF(msg)) == SIZEOF(msg),
+						"Setting character mode info to remote terminal failed.");
+				cl->state |= STATE_READY1 | STATE_READY2;
 			}
 		}
 		/* else: unrecognized option */
@@ -404,12 +406,7 @@ void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
 		close(sock);
 
 		/* remove from clients list */
-		for (int i = 0; i < ui_clients_socks_cap; ++i) {
-			if (ui_clients_socks[i] == sock) {
-				ui_clients_socks[i] = NO_SOCK;
-				break;
-			}
-		}
+		clients_list_kick(&ui_clients, sock);
 	}
 }
 
@@ -421,13 +418,12 @@ void ui_new_client_cb(struct evconnlistener *listener, evutil_socket_t sock,
 	UNUSED(arg);
 
 	/* put socket into clients list */
-	int *slot = ui_clients_free_slot();
+	struct client *slot = clients_list_new(&ui_clients);
 	if (slot) {
-		*slot = sock;
+		slot->sock = sock;
 	} else {
-		/* no place - close connection */
+		/* no place - close connection and abort */
 		close(sock);
-		/* ABORT */
 		return;
 	}
 
@@ -500,8 +496,7 @@ int main(int argc, char **argv) {
 	stations_list_init(&stations);
 
 	/* setup ui clients list */
-	for (int i = 0; i < ui_clients_socks_cap; ++i)
-		ui_clients_socks[i] = NO_SOCK;
+	clients_list_init(&ui_clients);
 
 	/* setup addresses */
 	TRY_TRUE(sockaddr_dotted(&discover_addr, discover_dotted, ctrl_port) == 1);
