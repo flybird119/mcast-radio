@@ -23,8 +23,10 @@ struct recvbuff {
 };
 
 void recvbuff_init(struct recvbuff *rbuff, const int bsize, const int psize);
+void recvbuff_reset(struct recvbuff *rbuff);
 void recvbuff_free(struct recvbuff *rbuff);
 
+int recvbuff_seqno_dist(const struct recvbuff *rbuff, const seqno_t seqno);
 int recvbuff_index(struct recvbuff *rbuff, seqno_t seqno);
 uint8_t *recvbuff_buf_get(const struct recvbuff *rbuff, const int index);
 struct packet_desc *recvbuff_map_get(const struct recvbuff *rbuff, const int index);

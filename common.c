@@ -1,3 +1,6 @@
+#include <stdarg.h>
+#include <stdio.h>
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -27,4 +30,14 @@ void setup_multicast_sockopt(int sock, int ttl, int loopback) {
 		TRY_SYS(setsockopt(sock, SOL_IP, IP_MULTICAST_LOOP, (void *) &optval,
 					sizeof(optval)));
 	}
+}
+
+void dlog(const char *fmt, ...) {
+	va_list fmt_args;
+
+	va_start(fmt_args, fmt);
+#ifdef DEBUG_FLAG
+	vfprintf(stderr, fmt, fmt_args);
+#endif
+	va_end (fmt_args);
 }

@@ -38,12 +38,26 @@ void recvbuff_init(struct recvbuff *rbuff, const int bsize, const int psize) {
 	rbuff->fseqno = 0;
 }
 
+void recvbuff_reset(struct recvbuff *rbuff) {
+	for (int i = 0; i < rbuff->capacity; ++i) {
+		packet_desc_init(rbuff->map + i);
+	}
+
+	rbuff->end = 0;
+	rbuff->consistient = 0;
+	rbuff->fseqno = 0;
+}
+
 void recvbuff_free(struct recvbuff *rbuff) {
 	free(rbuff->buff);
 	free(rbuff->map);
 
 	rbuff->buff = NULL;
 	rbuff->map = NULL;
+}
+
+int recvbuff_seqno_dist(const struct recvbuff *rbuff, const seqno_t seqno) {
+	return seqno - (rbuff->fseqno + rbuff->capacity);
 }
 
 int recvbuff_index(struct recvbuff *rbuff, seqno_t seqno) {

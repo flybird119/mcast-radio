@@ -19,8 +19,15 @@
 #define MCAST_TTL 4
 #define MCAST_LOOPBACK 1 // TODO for local testing
 
+/* global debug flag */
+#define DEBUG_FLAG // TODO
+
+#include <stdarg.h>
+
 int sockaddr_dotted(struct sockaddr_in* sockaddr, char* dotted_addr, in_port_t port);
 
 void setup_multicast_sockopt(int sock, int ttl, int loopback);
+
+void dlog(const char *fmt, ...);
 
 #endif /* __COMMON_H */

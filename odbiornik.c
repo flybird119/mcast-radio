@@ -19,9 +19,6 @@
 #include "recvbuff.h"
 #include "clients.h"
 
-// DEBUG_FLAG
-#define DEBUG_FLAG
-
 #ifdef DEBUG_FLAG
 #include "test-loose.h"
 #endif
@@ -35,6 +32,8 @@
 #define RCOUNT_MAX 8
 #define RDELAY_FIRST 1
 #define RDELAY_NEXT 2
+
+#define SEQNO_LAG_THRESH 1
 
 /* receiver configuration */
 char discover_dotted[ADDR_LEN] = DISCOVER_ADDR;
@@ -94,9 +93,7 @@ void current_station_connect(struct stations_list *list) {
 			/* the following doesn't work one would expect, we have to manually check
 			 * address got from recvfrom() and compare with current station */
 			/* TRY_SYS(connect(mcast_sock, (struct sockaddr *) &st->local_addr, sizeof(st->local_addr))); */
-#ifdef DEBUG_FLAG
-			fprintf(stderr, "Connected %s:%d.\n", inet_ntoa(st->local_addr.sin_addr), ntohs(st->local_addr.sin_port));
-#endif
+			dlog("Connected %s:%d.\n", inet_ntoa(st->local_addr.sin_addr), ntohs(st->local_addr.sin_port));
 		}
 		/* ready to listen */
 	}
@@ -134,9 +131,15 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 #endif
 		len_t length = data_length(packet);
 		if (header_isdata(&packet->header) && length <= packets.psize) {
-			seqno_t seqno = header_seqno(header);
+			const seqno_t seqno = header_seqno(header);
+			/* if we've gone too far after last possible seqno - reinit */
+			if (recvbuff_seqno_dist(&packets, seqno) > SEQNO_LAG_THRESH * packets.capacity) {
+				recvbuff_reset(&packets);
+				/* this packet will reinit fseqno */
+			}
 			/* check if it's a first packet */
 			if (packets.end == 0 && packets.fseqno == 0) {
+				dlog("First seqno received %d.\n", seqno);
 				/* we assume that this is the first packet from this station ever */
 				packets.fseqno = seqno;
 			}
@@ -157,24 +160,18 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					pdesc->length = length;
 					/* update consistient - we might have filled up one small hole */
 					recvbuff_update_consistient(&packets);
-#ifdef DEBUG_FLAG
-					fprintf(stderr, "\nPacket seqno %d length %d index %d consistient %d end %d capacity %d.\n",
+					dlog("Packet seqno %d length %d index %d consistient %d end %d capacity %d.\n",
 							seqno, data_length(packet), index, packets.consistient, packets.end, packets.capacity);
-#endif
 				}
 
 				/* flush buffer depending on policy */
 				if (packets.consistient * 100 >= packets.capacity * FLUSH_THRESH) {
 					/* threshold exceeded */
-#ifdef DEBUG_FLAG
-					fprintf(stderr, "Attempt to flush packets to OUT\n");
-#endif
+					dlog("Attempt to flush packets to OUT.\n");
 					recvbuff_flush(&packets, 1, packets.consistient);
 				} else if (packets.end >= packets.capacity - 1) {
 					/* we're running out of place in buffer */
-#ifdef DEBUG_FLAG
-					fprintf(stderr, "Attempt to flush all packets to free buffer\n");
-#endif
+					dlog("Attempt to flush all packets to free buffer.\n");
 					recvbuff_flush(&packets, -1, packets.end);
 				}
 			}
@@ -204,9 +201,8 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 	}
 	/* depending on policy try to flush buffer up to this place or discard */
 	if (dead_count > 0) {
-#ifdef DEBUG_FLAG
-		fprintf(stderr, "Attempt to flush dead packets up to %d\n", last_dead + 1);
-#endif
+		dlog("Attempt to flush dead packets up to %d.\n", last_dead + 1);
+
 		recvbuff_flush(&packets, -1, last_dead + 1); /* flush including last dead packet */
 	}
 
@@ -225,9 +221,9 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 					/* send request */
 					struct proto_packet packet;
 					struct station_desc *st = stations_list_current(&stations);
-#ifdef DEBUG_FLAG
-					fprintf(stderr, "Requesting retransmission of packet %d.\n", packets.fseqno + i);
-#endif
+
+					dlog("Requesting retransmission of packet %d.\n", packets.fseqno + i);
+
 					header_init(&packet.header, packets.fseqno + i, 0, PROTO_RETQUERY);
 					EXPECT(sendto(ctrl_sock, &packet, packet_length(&packet), 0, (struct sockaddr *)
 								&st->ctrl_addr, sizeof(st->ctrl_addr)) == (int) packet_length(&packet),
@@ -336,9 +332,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 		} else if (header_isempty(&packet.header)
 				&& header_flag_isset(&packet.header, PROTO_FAIL)) {
 			/* we've been notified that retransmission failed */
-#ifdef DEBUG_FLAG
-			fprintf(stderr, "Sender failed to retransmit packet %d.\n", header_seqno(&packet.header));
-#endif
+			dlog("Sender failed to retransmit packet %d.\n", header_seqno(&packet.header));
 			/* find packet in packets.map and set rcount = rdelay = 0 */
 			struct packet_desc *pdesc = recvbuff_map_get(&packets, recvbuff_index(&packets, header_seqno(&packet.header)));
 			if (pdesc) {

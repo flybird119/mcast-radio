@@ -45,7 +45,7 @@ char loose_drop(struct proto_packet *packet) {
 	int seqno = header_seqno(&packet->header);
 	if (seqno < MAX_SEQNO && skip[seqno]) {
 		--skip[seqno];
-		fprintf(stderr, "loosing seqno %d\n\n", seqno);
+		fprintf(stderr, "loosing seqno %d\n", seqno);
 		return 1;
 	} else
 		return 0;
