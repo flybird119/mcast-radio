@@ -144,50 +144,41 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 			int index = recvbuff_index(&packets, seqno);
 			uint8_t *data = recvbuff_buf_get(&packets, index);
 			struct packet_desc *pdesc = recvbuff_map_get(&packets, index);
+			/* mark packets up to this one as pending retransmission we start from end,
+			 * none of these packets had been known to receiver before,
+			 * so we should threat them as before first retransmission */
+			recvbuff_mark_retrans(&packets, index, RDELAY_FIRST, RCOUNT_MAX);
+			/* if we may fit in buffer - push this packet too */
 			if (data) {
-				memcpy(data, packet->data, length);
-				/* mark as valid */
-				pdesc->length = length;
-				/* mark packets up to this one as pending retransmission */
-				struct packet_desc *d = recvbuff_map_get(&packets, packets.end);
-				/* we start from end, none of these packets had been known to receiver before,
-				 * so we should threat thema as before first retransmission */
-				ASSERT((d) && (pdesc));
-				while(d < pdesc) { /* implied range checking */
-					if (d->length == 0) {
-						/* proper delay */
-						d->rdelay = RDELAY_FIRST;
-						d->rcount = RCOUNT_MAX;
-					}
-					/* next */
-					++d;
-				}
-				/* update end */
-				if (packets.end <= index)
-					packets.end = index + 1;
-				/* update consistient - we might have filled up one small hole */
-				while (packets.consistient < packets.end) {
-					struct packet_desc *d = recvbuff_map_get(&packets, packets.consistient);
-					if (d->length == 0) {
-						break;
-					}
-					++packets.consistient;
-				}
+				ASSERT(pdesc);
+				if (pdesc->length == 0) {
+					memcpy(data, packet->data, length);
+					/* mark as valid */
+					pdesc->length = length;
+					/* update consistient - we might have filled up one small hole */
+					recvbuff_update_consistient(&packets);
 #ifdef DEBUG_FLAG
-				fprintf(stderr, "\nPacket seqno %d length %d index %d consistient %d end %d capacity %d\n",
-						seqno, data_length(packet), index, packets.consistient, packets.end, packets.capacity);
+					fprintf(stderr, "\nPacket seqno %d length %d index %d consistient %d end %d capacity %d.\n",
+							seqno, data_length(packet), index, packets.consistient, packets.end, packets.capacity);
 #endif
+				}
+
+				/* flush buffer depending on policy */
+				if (packets.consistient * 100 >= packets.capacity * FLUSH_THRESH) {
+					/* threshold exceeded */
+#ifdef DEBUG_FLAG
+					fprintf(stderr, "Attempt to flush packets to OUT\n");
+#endif
+					recvbuff_flush(&packets, 1, packets.consistient);
+				} else if (packets.end >= packets.capacity - 1) {
+					/* we're running out of place in buffer */
+#ifdef DEBUG_FLAG
+					fprintf(stderr, "Attempt to flush all packets to free buffer\n");
+#endif
+					recvbuff_flush(&packets, -1, packets.end);
+				}
 			}
 			/* else: seqno out of range */
-
-			/* flush buffer depending on policy */
-			if (packets.consistient * 100 >= packets.capacity * FLUSH_THRESH) {
-				/* threshold exceeded */
-				recvbuff_flush(&packets, 1, packets.consistient);
-			} else if (packets.end >= packets.capacity - 1) {
-				/* we're running out of place in buffer */
-				recvbuff_flush(&packets, -1, packets.end);
-			}
 		}
 		/* else: ignore packet */
 	} 
@@ -204,6 +195,7 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 	int dead_count = 0;
 	for (int i = packets.consistient; i < packets.end; ++i) {
 		struct packet_desc *pdesc = recvbuff_map_get(&packets, i);
+		ASSERT(pdesc);
 		if (pdesc->length == 0 && pdesc->rdelay == 0 && pdesc->rcount == 0) {
 			/* dead packet */
 			last_dead = i;
@@ -212,6 +204,9 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 	}
 	/* depending on policy try to flush buffer up to this place or discard */
 	if (dead_count > 0) {
+#ifdef DEBUG_FLAG
+		fprintf(stderr, "Attempt to flush dead packets up to %d\n", last_dead + 1);
+#endif
 		recvbuff_flush(&packets, -1, last_dead + 1); /* flush including last dead packet */
 	}
 
@@ -220,6 +215,7 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 	 * and packets.end == packets.consistient */
 	for (int i = packets.consistient; i < packets.end; ++i) {
 		struct packet_desc *pdesc = recvbuff_map_get(&packets, i);
+		ASSERT(pdesc);
 		if (pdesc->length == 0) {
 			if (pdesc->rdelay == 0) {
 				if (pdesc->rcount > 0) {
@@ -229,7 +225,9 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 					/* send request */
 					struct proto_packet packet;
 					struct station_desc *st = stations_list_current(&stations);
-
+#ifdef DEBUG_FLAG
+					fprintf(stderr, "Requesting retransmission of packet %d.\n", packets.fseqno + i);
+#endif
 					header_init(&packet.header, packets.fseqno + i, 0, PROTO_RETQUERY);
 					EXPECT(sendto(ctrl_sock, &packet, packet_length(&packet), 0, (struct sockaddr *)
 								&st->ctrl_addr, sizeof(st->ctrl_addr)) == (int) packet_length(&packet),
@@ -339,7 +337,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 				&& header_flag_isset(&packet.header, PROTO_FAIL)) {
 			/* we've been notified that retransmission failed */
 #ifdef DEBUG_FLAG
-			fprintf(stderr, "Retransmission of packet %d failed.\n", header_seqno(&packet.header));
+			fprintf(stderr, "Sender failed to retransmit packet %d.\n", header_seqno(&packet.header));
 #endif
 			/* find packet in packets.map and set rcount = rdelay = 0 */
 			struct packet_desc *pdesc = recvbuff_map_get(&packets, recvbuff_index(&packets, header_seqno(&packet.header)));

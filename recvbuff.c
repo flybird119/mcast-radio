@@ -65,7 +65,48 @@ struct packet_desc *recvbuff_map_get(const struct recvbuff *rbuff, const int ind
 		return NULL;
 }
 
-void recvbuff_flush(struct recvbuff *rbuff, const int fd, const int pcount) {
+int recvbuff_mark_retrans(struct recvbuff *rbuff, int index, const char rdelay,
+		const char rcount) {
+	/* prevent stupid overflows */
+	if (index >= rbuff->capacity)
+		index = rbuff->capacity - 1;
+
+	int count = 0;
+	for (int i = rbuff->end; i <= index; ++i) {
+		struct packet_desc *d = recvbuff_map_get(rbuff, i);
+		ASSERT(d);
+		if (d->length == 0) {
+			/* proper delay */
+			d->rdelay = rdelay;
+			d->rcount = rcount;
+			++count;
+		}
+	}
+	/* update end */
+	if (rbuff->end <= index)
+		rbuff->end = index + 1;
+	return count;
+}
+
+int recvbuff_update_consistient(struct recvbuff *rbuff) {
+	int count = 0;
+	while (rbuff->consistient < rbuff->end) {
+		struct packet_desc *d = recvbuff_map_get(rbuff, rbuff->consistient);
+		ASSERT(d);
+		if (d->length == 0) {
+			break;
+		}
+		++rbuff->consistient;
+		++count;
+	}
+	return count;
+}
+
+void recvbuff_flush(struct recvbuff *rbuff, const int fd, int pcount) {
+	/* prevent stupid overflows */
+	if (pcount > rbuff->capacity)
+		pcount = rbuff->capacity;
+
 	int i;
 	/* write pcount packets from beginning of the buffer to file descriptor fd */
 	if (fd >= 0) {

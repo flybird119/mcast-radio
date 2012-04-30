@@ -29,6 +29,9 @@ int recvbuff_index(struct recvbuff *rbuff, seqno_t seqno);
 uint8_t *recvbuff_buf_get(const struct recvbuff *rbuff, const int index);
 struct packet_desc *recvbuff_map_get(const struct recvbuff *rbuff, const int index);
 
-void recvbuff_flush(struct recvbuff *rbuff, const int fd, const int pcount);
+int recvbuff_mark_retrans(struct recvbuff *rbuff, int index, const char rdelay,
+		const char rcount);
+int recvbuff_update_consistient(struct recvbuff *rbuff);
+void recvbuff_flush(struct recvbuff *rbuff, const int fd, int pcount);
 
 #endif /* __RECVBUFF_H */
