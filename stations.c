@@ -20,7 +20,7 @@ void station_desc_init(struct station_desc *st, struct proto_ident *packet, stru
 	memcpy(&st->ctrl_addr, addr, sizeof(st->ctrl_addr));
 	strncpy(st->tune_name, packet->tune_name, sizeof(st->tune_name) - 1);
 	st->psize = ident_psize(packet);
-	fprintf(stderr, "New stations packet size %d.\n", st->psize);
+	dlog("New stations packet size %d.\n", st->psize);
 }
 
 int stations_equal(struct station_desc *st, struct proto_ident *ident) {
