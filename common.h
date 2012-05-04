@@ -20,7 +20,7 @@
 #define MCAST_LOOPBACK 1 // TODO for local testing
 
 /* global debug flag */
-//#define DEBUG_FLAG
+#define DEBUG_FLAG
 
 #include <stdarg.h>
 

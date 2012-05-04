@@ -15,8 +15,8 @@
 
 void station_desc_init(struct station_desc *st, struct proto_ident *packet, struct sockaddr_in *addr) {
 	st->expiry_ticks = DISCOVER_KICK_THRESH;
-	memcpy(&st->mcast_addr, &packet->mcast_addr, sizeof(st->mcast_addr));
-	memcpy(&st->local_addr, &packet->local_addr, sizeof(st->local_addr));
+	memcpy(&st->mcast_addr, &packet->mcast.addr, sizeof(st->mcast_addr));
+	memcpy(&st->local_addr, &packet->local.addr, sizeof(st->local_addr));
 	memcpy(&st->ctrl_addr, addr, sizeof(st->ctrl_addr));
 	strncpy(st->tune_name, packet->tune_name, sizeof(st->tune_name) - 1);
 	st->psize = ident_psize(packet);
@@ -26,10 +26,10 @@ void station_desc_init(struct station_desc *st, struct proto_ident *packet, stru
 int stations_equal(struct station_desc *st, struct proto_ident *ident) {
 	/* compare everything you know */
 	return (st->psize == ident_psize(ident))
-		&& (st->local_addr.sin_addr.s_addr == ident->local_addr.sin_addr.s_addr)
-		&& (st->local_addr.sin_port == ident->local_addr.sin_port)
-		&& (st->mcast_addr.sin_addr.s_addr == ident->mcast_addr.sin_addr.s_addr)
-		&& (st->mcast_addr.sin_port == ident->mcast_addr.sin_port)
+		&& (st->local_addr.sin_addr.s_addr == ident->local.addr.sin_addr.s_addr)
+		&& (st->local_addr.sin_port == ident->local.addr.sin_port)
+		&& (st->mcast_addr.sin_addr.s_addr == ident->mcast.addr.sin_addr.s_addr)
+		&& (st->mcast_addr.sin_port == ident->mcast.addr.sin_port)
 		&& (strncmp(st->tune_name, ident->tune_name, sizeof(st->tune_name)) == 0);
 }
 

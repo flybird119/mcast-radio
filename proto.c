@@ -16,8 +16,8 @@ void ident_init(struct proto_ident *ident, struct sockaddr_in *mcast,
 		struct sockaddr_in *local, len_t psize) {
 	header_init(&ident->header, 0,
 			(sizeof(struct proto_ident) - sizeof(struct proto_header)), PROTO_IDRESP);
-	memcpy(&ident->mcast_addr, mcast, sizeof(ident->mcast_addr));
-	memcpy(&ident->local_addr, local, sizeof(ident->local_addr));
+	memcpy(&ident->mcast.addr, mcast, sizeof(*mcast));
+	memcpy(&ident->local.addr, local, sizeof(*local));
 	ident->psize = htons(psize);
 }
 

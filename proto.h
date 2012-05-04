@@ -29,21 +29,34 @@ struct proto_header {
 #define PROTO_MAX_PACKET (1<<15)
 #define PROTO_MAX_DATA ((1<<15)-sizeof(struct proto_header))
 
+#define PROTO_ADDR_SZ 128
+
+union proto_addr {
+	/* address */
+	struct sockaddr_in addr;
+	struct sockaddr_storage addr_s;
+	/* ensures that address has proper size */
+	uint8_t __padding[PROTO_ADDR_SZ];
+}__attribute__((packed));
+
+_Static_assert(sizeof(union proto_addr) == PROTO_ADDR_SZ, "union proto_addr size invalid");
+
 struct proto_ident {
 	struct proto_header header;
 	/* data */
 	char tune_name[NAME_LEN];
 	char app_name[NAME_LEN];
 	len_t psize;
-	struct sockaddr_in mcast_addr;
-	struct sockaddr_in local_addr;
+	/* these two fields must be large enough to work across platforms */
+	union proto_addr mcast;
+	union proto_addr local;
 }__attribute__((packed));
 
 struct proto_packet {
 	struct proto_header header;
 	/* data */
 	char data[];
-};
+}__attribute__((packed));
 
 void header_init(struct proto_header *header, seqno_t seqno, len_t len, flags_t flags);
 void ident_init(struct proto_ident *ident, struct sockaddr_in *mcast,

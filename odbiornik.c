@@ -28,6 +28,7 @@
 #define DISCOVER_TIMEOUT 5000
 
 #define FLUSH_THRESH 75 /* % */
+#define RETRANS_THRESH 50 /* % */
 
 #define RCOUNT_MAX 8
 #define RDELAY_FIRST 1
@@ -143,8 +144,14 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 				/* we assume that this is the first packet from this station ever */
 				packets.fseqno = seqno;
 			}
+			int index;
+			/* make sure there's enough place */
+			if ((index = recvbuff_index(&packets, seqno)) >= packets.capacity) {
+				dlog("Attempt to drop packets to free buffer.\n");
+				recvbuff_flush(&packets, -1, index - packets.capacity + 1);
+			}
 			/* copy data */
-			int index = recvbuff_index(&packets, seqno);
+			index = recvbuff_index(&packets, seqno);
 			uint8_t *data = recvbuff_buf_get(&packets, index);
 			struct packet_desc *pdesc = recvbuff_map_get(&packets, index);
 			/* mark packets up to this one as pending retransmission we start from end,
@@ -169,10 +176,6 @@ void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					/* threshold exceeded */
 					dlog("Attempt to flush packets to OUT.\n");
 					recvbuff_flush(&packets, 1, packets.consistient);
-				} else if (packets.end >= packets.capacity - 1) {
-					/* we're running out of place in buffer */
-					dlog("Attempt to flush all packets to free buffer.\n");
-					recvbuff_flush(&packets, -1, packets.end);
 				}
 			}
 			/* else: seqno out of range */
@@ -214,7 +217,8 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 		ASSERT(pdesc);
 		if (pdesc->length == 0) {
 			if (pdesc->rdelay == 0) {
-				if (pdesc->rcount > 0) {
+				/* we'd like to ask for retransmission of this packet, check if we can */
+				if ((i * 100 <= packets.capacity * RETRANS_THRESH) && (pdesc->rcount > 0)) {
 					pdesc->rcount--;
 					/* set proper delay */
 					pdesc->rdelay = RDELAY_NEXT;
@@ -228,9 +232,6 @@ void rtime_timeout_cb(evutil_socket_t sock, short ev, void *arg) {
 					EXPECT(sendto(ctrl_sock, &packet, packet_length(&packet), 0, (struct sockaddr *)
 								&st->ctrl_addr, sizeof(st->ctrl_addr)) == (int) packet_length(&packet),
 							"Sending retransmission request failed.\n");
-				} else {
-					/* this shouldn't happened */
-					ASSERT(0);
 				}
 			} else {
 				/* update delay */
