@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include <netinet/in.h>
 
 #include "proto.h"
@@ -10,14 +12,22 @@ void header_init(struct proto_header *header, seqno_t seqno, len_t len, flags_t 
 	header->version = PROTO_VERSION;
 }
 
-void ident_init(struct proto_ident *ident, seqno_t seqno, flags_t flags, len_t psize) {
-	header_init(&ident->header, seqno,
-			(sizeof(struct proto_ident) - sizeof(struct proto_header)), flags);
+void ident_init(struct proto_ident *ident, struct sockaddr_in *mcast,
+		struct sockaddr_in *local, len_t psize) {
+	header_init(&ident->header, 0,
+			(sizeof(struct proto_ident) - sizeof(struct proto_header)), PROTO_IDRESP);
+	memcpy(&ident->mcast_addr, mcast, sizeof(ident->mcast_addr));
+	memcpy(&ident->local_addr, local, sizeof(ident->local_addr));
 	ident->psize = htons(psize);
 }
 
 seqno_t header_seqno(struct proto_header *header) {
 	return ntohl(header->seqno);
+}
+
+/* NOTE: flags has one byte so it's byte order agnostic */
+char header_flag_isonly(struct proto_header *header, flags_t flag) {
+	return header->flags == flag;
 }
 
 /* NOTE: flags has one byte so it's byte order agnostic */
@@ -57,7 +67,7 @@ char validate_packet(struct proto_packet *packet, ssize_t rlen) {
 }
 
 char header_isident(struct proto_header *header) {
-	return packet_length((struct proto_packet *) header) == sizeof(struct proto_ident) && header_flag_isset(header, PROTO_IDRESP);
+	return packet_length((struct proto_packet *) header) == sizeof(struct proto_ident) && header_flag_isonly(header, PROTO_IDRESP);
 }
 
 char header_isempty(struct proto_header *header) {
@@ -65,5 +75,5 @@ char header_isempty(struct proto_header *header) {
 }
 
 char header_isdata(struct proto_header *header) {
-	return header_flag_isset(header, PROTO_DATA | PROTO_DORETR);
+	return header_flag_isonly(header, PROTO_DATA);
 }

@@ -227,11 +227,9 @@ int main(int argc, char **argv) {
 		socklen_t addr_len = sizeof(temp_addr);
 		TRY_SYS(getsockname(mcast_sock, (struct sockaddr *) &temp_addr, &addr_len));
 
-		ident_init(&pack_my_ident, 0, PROTO_IDRESP, psize);
-		memcpy(&pack_my_ident.mcast_addr, &mcast_addr, sizeof(pack_my_ident.mcast_addr));
-		memcpy(&pack_my_ident.local_addr, &temp_addr, sizeof(pack_my_ident.local_addr));
-		strncpy(pack_my_ident.app_name, argv[0], sizeof(pack_my_ident.app_name) - 1);
+		ident_init(&pack_my_ident, &mcast_addr, &temp_addr, psize);
 		strncpy(pack_my_ident.tune_name, name, sizeof(pack_my_ident.tune_name) - 1);
+		strncpy(pack_my_ident.app_name, argv[0], sizeof(pack_my_ident.app_name) - 1);
 	}
 	/* NOTE: pack_ret_failed must be reinitialized before sending with proper seqno */
 

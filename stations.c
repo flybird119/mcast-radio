@@ -25,11 +25,12 @@ void station_desc_init(struct station_desc *st, struct proto_ident *packet, stru
 
 int stations_equal(struct station_desc *st, struct proto_ident *ident) {
 	/* compare everything you know */
-	return (memcmp(&st->mcast_addr, &ident->mcast_addr, sizeof(st->mcast_addr)) == 0)
-		&& (memcmp(&st->local_addr, &ident->local_addr, sizeof(st->local_addr)) == 0)
+	return (st->psize == ident_psize(ident))
 		&& (st->local_addr.sin_addr.s_addr == ident->local_addr.sin_addr.s_addr)
-		&& (strcmp(st->tune_name, ident->tune_name) == 0)
-		&& (st->psize == ident_psize(ident));
+		&& (st->local_addr.sin_port == ident->local_addr.sin_port)
+		&& (st->mcast_addr.sin_addr.s_addr == ident->mcast_addr.sin_addr.s_addr)
+		&& (st->mcast_addr.sin_port == ident->mcast_addr.sin_port)
+		&& (strncmp(st->tune_name, ident->tune_name, sizeof(st->tune_name)) == 0);
 }
 
 void stations_list_init(struct stations_list *list) {

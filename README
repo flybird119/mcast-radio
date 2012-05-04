@@ -4,15 +4,82 @@ Mateusz Machalica; 305678; SIK; "Radio internetowe"
 OPIS PROTOKOŁU
 --------------
 
-Format pakietów
+% TODO
+
+Wszystkie wartości składające się z więcej niż jednego bajta przechowywane są w sieciowym porządku bajtów.
+
+Format pakietu
 ---------------
+
+Pakiety przesyłane są w formie datagramów UDP.
+Pakiet składa się z nagłówka i sekcji danych.
+Format sekcji danych jest zależny od flag ustawionych w nagłówku.
 
 Format nagłówka
 ---------------
 
-Algorytm nadajnika
+Nagłówek ma następujący format:
+
+|      2 oktety     | 1 oktet | 1 oktet |
++-------------------+---------+---------+
+|       numer sekwencyjny pakietu       |
++-------------------+---------+---------+
+|  długość pakietu  |  flagi  |  wersja |
++-------------------+---------+---------+
+
+Numer sekwencyjny pakietu to 32-bitowa liczba bez znaku, ma znaczenie tylko dla pakietów z ustawioną flagą DATA (patrz dalej).
+
+Długość pakietu to 16-bitowa liczba bez znaku, równa długości pakietu (długość nagłówka + długość danych) wyrażonej w oktetach.
+
+Wersja to 8-bitowa liczba bez znaku, równa wersji protokołu, obecnie 1.
+
+Flagi to 8-bitowa liczba bez znaku, równa sumie bitowej podzbioru następujących wartości:
+	RETQUERY    0x1
+	IDQUERY     0x2
+	IDRESP      0x4
+	DATA        0x8
+	FAIL        0xF
+Powiemy, że flaga X jest ustawiona w nagłówku, jeśli pole flagi nagłówka ma wartości Y i Y & X != 0.
+Podobnie flaga jest ustawiona w pakiecie jeśli jest ustawiona w nagłówku tego pakietu.
+
+Pewne pary flag X != Y nazwiemy sprzecznymi.
+Pakiet z ustawionymi dwiema sprzecznymi flagami, nie jest poprawnym pakietem protokołu.
+Niech każde dwie różne flagi są sprzeczne, chyba że w dalszej części specyfikacji zaznaczono inaczej.
+
+Format sekcji danych
+--------------------
+
+Format sekcji danych zależy od ustawionych flag w nagłówku pakietu.
+
+Jeśli ustawiona jest jedna z flag:
+	RETQUERY (pakiet z prosbą o retransmisję, numer sekwenycjny w nagłówku jest numerem pakietu o którego retransmisję prosimy)
+	IDQUERY (pakiet z prośbą o identyfikację)
+	FAIL (pakiet informujący o niemożności retransmisji o numerze sekwencyjnym takim jak numer w nagłóku pakietu)
+to sekcja danych jest pusta (ma 0 bajtów).
+
+Flagi RETQUERY i IDQUERY nie są sprzeczne.
+
+Jeśli ustawiona jest flaga IDRESP (pakiet z odpowiedzią na prośbę o identyfikację) to sekcja danych ma następujący format:
+% TODO
+- NAME_LEN oktetów zawierających nazwę stacji wysyłającej ten pakiet zapisaną jako NULL Terminated String (dopełnione do wymaganej liczby oktetów zerami)
+- NAME_LEN oktetów zawierających nazwę aplikacji wysyłającej ten pakiet zapisaną jako NULL Terminated String (dopełnione do wymaganej liczby oktetów zerami)
+- 16-bitową liczbę bez znaku oznaczającą rozmiar sekcji danych w pakiecie z ustawioną flagą DATA w nagłówku, wysyłanym przez tą stację
+
+Jeśli ustawiona jest flaga DATA to sekcja danych zawiera ciąg oktetów, które stanowią przesyłane dane.
+
+Opis nadajnika
 ------------------
 
-Algorytm odbiornika
+Nadajnik nasłuchuje na portach jak opisano w sformułowaniu zadania i odpowiada na prosby o identyfikację jak opisanym juz pakietem.
+
+Po otrzymaniu prośby o retransmisję pakietu sprawdza czy znajduje się on w kolejce fifo, jeśli tak to zaznacza pakiet jako do retransmisji, jeśli pakiet nie znajduje się w kolejce fifo to na adres (i numer portu) z którego otrzymano prośbe odsyłany jest pakiet z informacją o niemożności retransmisji.
+
+Co czas RTIME nadajnik ponownie wysyła wszystkie pakiety jakie znajdują się w kolejce fifo i zostały zaznaczone jak do retransmisji.
+
+Opis odbiornika
 -------------------
+
+Odbiornik wysyła prosby o identyfikację i odbiera odpowiedzi jak zdefiniowano w sformułowaniu zadania.
+
+% TODO
 

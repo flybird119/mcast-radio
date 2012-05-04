@@ -322,7 +322,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 					/* check if we're waiting for this station (and switch if so) */
 					ASSERT(sizeof(dest_tune_name) == sizeof(st->tune_name));
 					ASSERT(dest_tune_name[sizeof(dest_tune_name) - 1] == 0);
-					if (strcmp(st->tune_name, dest_tune_name) == 0)
+					if (strncmp(st->tune_name, dest_tune_name, sizeof(st->tune_name)) == 0)
 						stations_list_set_current(&stations, st);
 					current_station_connect(&stations);
 					/* refresh if added */
@@ -330,7 +330,7 @@ void ctrl_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 				}
 			}
 		} else if (header_isempty(&packet.header)
-				&& header_flag_isset(&packet.header, PROTO_FAIL)) {
+				&& header_flag_isonly(&packet.header, PROTO_FAIL)) {
 			/* we've been notified that retransmission failed */
 			dlog("Sender failed to retransmit packet %d.\n", header_seqno(&packet.header));
 			/* find packet in packets.map and set rcount = rdelay = 0 */

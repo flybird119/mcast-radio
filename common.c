@@ -33,11 +33,12 @@ void setup_multicast_sockopt(int sock, int ttl, int loopback) {
 }
 
 void dlog(const char *fmt, ...) {
+	UNUSED(fmt);
+#ifdef DEBUG_FLAG
 	va_list fmt_args;
 
 	va_start(fmt_args, fmt);
-#ifdef DEBUG_FLAG
 	vfprintf(stderr, fmt, fmt_args);
-#endif
 	va_end (fmt_args);
+#endif
 }

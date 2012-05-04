@@ -13,6 +13,9 @@ void sendbuff_init(struct sendbuff *sbuff, const int fsize, const int psize) {
 	sbuff->capacity = fsize / psize + ((fsize % psize) ? 1 : 0);
 	sbuff->hpsize = sizeof(struct proto_header) + psize;
 	sbuff->buff = (uint8_t *) malloc(sbuff->capacity * sbuff->hpsize);
+
+	sbuff->begin = 0;
+	sbuff->end = 0;
 }
 
 void sendbuff_free(struct sendbuff *sbuff) {
@@ -52,10 +55,12 @@ struct proto_packet *sendbuff_back(const struct sendbuff *sbuff) {
 
 void sendbuff_next(struct sendbuff *sbuff) {
 	++sbuff->end;
+	sbuff->end %= sbuff->capacity;
 	if (sbuff->end == sbuff->begin) {
 		/* won't fire first time, when buffer size is 1 */
 		++sbuff->begin;
 		sbuff->begin %= sbuff->capacity;
 	}
-	sbuff->end %= sbuff->capacity;
+	dlog("Sending fifo begin %d end %d first seqno %d\n", sbuff->begin, sbuff->end,
+			header_seqno((struct proto_header *) sendbuff_getnth(sbuff, 0)));
 }

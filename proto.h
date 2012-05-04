@@ -24,8 +24,6 @@ struct proto_header {
 	len_t length;
 	flags_t flags;
 	uint8_t  version;
-
-	uint8_t __padding; /* padding */
 }__attribute__((packed));
 
 #define PROTO_MAX_PACKET (1<<15)
@@ -34,11 +32,11 @@ struct proto_header {
 struct proto_ident {
 	struct proto_header header;
 	/* data */
-	struct sockaddr_in mcast_addr;
-	struct sockaddr_in local_addr;
 	char tune_name[NAME_LEN];
 	char app_name[NAME_LEN];
 	len_t psize;
+	struct sockaddr_in mcast_addr;
+	struct sockaddr_in local_addr;
 }__attribute__((packed));
 
 struct proto_packet {
@@ -48,10 +46,12 @@ struct proto_packet {
 };
 
 void header_init(struct proto_header *header, seqno_t seqno, len_t len, flags_t flags);
-void ident_init(struct proto_ident *ident, seqno_t seqno, flags_t flags, len_t psize);
+void ident_init(struct proto_ident *ident, struct sockaddr_in *mcast,
+		struct sockaddr_in *local, len_t psize);
 
 seqno_t header_seqno(struct proto_header *header);
 
+char header_flag_isonly(struct proto_header *header, flags_t flag);
 flags_t header_flag_isset(struct proto_header *header, flags_t flag);
 void header_flag_set(struct proto_header *header, flags_t flag);
 void header_flag_clear(struct proto_header *header, flags_t flag);
