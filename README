@@ -4,7 +4,7 @@ Mateusz Machalica; 305678; SIK; "Radio internetowe"
 OPIS PROTOKOŁU
 --------------
 
-Wszystkie wartości składające się z więcej niż jednego bajta przechowywane są w sieciowym porządku bajtów.
+Wszystkie wartości liczbowe składające się z więcej niż jednego bajta przechowywane są w sieciowym porządku bajtów.
 
 Format pakietu
 ---------------
@@ -52,52 +52,80 @@ Maksymalna długość sekcji danych wynosi 2^15 oktetów.
 Format sekcji danych zależy od ustawionych flag w nagłówku pakietu.
 
 Jeśli ustawiona jest jedna z flag:
-	RETQUERY (pakiet z prosbą o retransmisję, numer sekwenycjny w nagłówku jest numerem pakietu o którego retransmisję prosimy)
+	RETQUERY (pakiet z prośbą o retransmisję, numer sekwencyjny w nagłówku jest numerem pakietu o którego retransmisję prosimy)
 	IDQUERY (pakiet z prośbą o identyfikację)
-	FAIL (pakiet informujący o niemożności retransmisji o numerze sekwencyjnym takim jak numer w nagłóku pakietu)
+	FAIL (pakiet informujący o niemożności retransmisji o numerze sekwencyjnym takim jak numer w nagłówku pakietu)
 to sekcja danych jest pusta (ma 0 bajtów).
 
-Flagi RETQUERY i IDQUERY nie są sprzeczne.
+Flagi RETQUERY i IDQUERY nie są sprzeczne. Pakiet, który zawiera ustawione obie flagi jest traktowany jak dwa osobne pakiety z ustawionymi flagami pojedynczo.
 
 Jeśli ustawiona jest flaga IDRESP (pakiet z odpowiedzią na prośbę o identyfikację) to sekcja danych ma następujący format:
-- NAME_LEN oktetów zawierających nazwę stacji wysyłającej ten pakiet zapisaną jako NULL Terminated String (dopełnione do wymaganej liczby oktetów zerami)
-- NAME_LEN oktetów zawierających nazwę aplikacji wysyłającej ten pakiet zapisaną jako NULL Terminated String (dopełnione do wymaganej liczby oktetów zerami)
-- 16-bitową liczbę bez znaku oznaczającą rozmiar sekcji danych w pakiecie PSIZE z ustawioną flagą DATA w nagłówku, wysyłanym przez tą stację
-- blok 128 oktetów zawierający wyrównaną do poczatku bloku zawartość struktury struct sockaddr_storage zdefiniowanej w RFC 2553, która zawiera adres i port adresu rozgłoszeniowego na którym nadaje stacja wysyłająca ten pakiet
-- blok 128 oktetów zawierający wyrównaną do poczatku bloku zawartość struktury struct sockaddr_storage zdefiniowanej w RFC 2553, która zawiera adres i port adresu lokalnego, z którego nadaje na adres rozgłoszeniowy stacja wysyłająca ten pakiet
+- 32 oktety zawierających nazwę stacji wysyłającej ten pakiet zapisaną jako NULL Terminated String (dopełnione do wymaganej liczby oktetów zerami)
+- 32 oktety zawierających nazwę aplikacji wysyłającej ten pakiet zapisaną jako NULL Terminated String (dopełnione do wymaganej liczby oktetów zerami)
+- 16-bitową (2 oktety) liczbę bez znaku oznaczającą rozmiar sekcji danych w pakiecie PSIZE z ustawioną flagą DATA w nagłówku, wysyłanym przez tą stację
+- blok adresowy, 128 oktetów, zawierający wyrównaną do początku bloku zawartość struktury struct sockaddr_storage zdefiniowanej w RFC 2553, która zawiera adres i port adresu rozgłoszeniowego na którym nadaje stacja wysyłająca ten pakiet
+- blok adresowy, 128 oktetów, zawierający wyrównaną do początku bloku zawartość struktury struct sockaddr_storage zdefiniowanej w RFC 2553, która zawiera adres i port adresu lokalnego, z którego nadaje na adres rozgłoszeniowy stacja wysyłająca ten pakiet
+
+Format bloku adresowego:
+- 2 oktety - nieużywane
+- 16-bitowa liczba ze znakiem oznaczająca port TCP/UDP
+- 32-bitowa liczba ze znakiem oznaczająca adres IPv4, w formacie zgodnym z tym, zwracanym przez funkcję inet_pton w standardzie IEEE Std 1003.1, 2003 Edition, Standard for Information Technology -- Portable Operating System Interface (POSIX)
+- reszta oktetów - nieużywane
+
+Kompatybilność z sockaddr_storage pozwala na rozszerzenia w przyszłości protokołu o wsparcie IPv6.
+
+Jeśli adres (adres IP i numer portu) gniazda, z którego będą nadawane pakiety z danymi na adres rozgłoszeniowy nie będzie zgodny z tym zadeklarowanym przez stację w bloku adresowym pakietu identyfikacyjnego, to taki pakiety będą odrzucane przez odbiornik.
 
 Jeśli ustawiona jest flaga DATA (pakiet z danymi) to sekcja danych zawiera ciąg oktetów, które stanowią przesyłane dane.
 
 Opis nadajnika
 ------------------
 
-Nadajnik nasłuchuje na portach jak opisano w sformułowaniu zadania i odpowiada na prosby o identyfikację opisanym juz pakietem.
+Nadajnik nasłuchuje na portach jak opisano w sformułowaniu zadania i odpowiada na prośby o identyfikację opisanym już pakietem.
 
-Po otrzymaniu prośby o retransmisję pakietu sprawdza czy znajduje się on w kolejce fifo, jeśli tak to zaznacza pakiet jako do retransmisji, jeśli pakiet nie znajduje się w kolejce fifo to na adres (i numer portu) z którego otrzymano prośbe odsyłany jest pakiet z informacją o niemożności retransmisji.
+Po otrzymaniu prośby o retransmisję pakietu sprawdza czy znajduje się on w kolejce fifo, jeśli tak to zaznacza pakiet jako do retransmisji, jeśli pakiet nie znajduje się w kolejce fifo to na adres (i numer portu) z którego otrzymano prośbę odsyłany jest pakiet z informacją o niemożności retransmisji.
 
 Co czas RTIME nadajnik ponownie wysyła wszystkie pakiety jakie znajdują się w kolejce fifo i zostały zaznaczone jako do retransmisji oraz odznacza je.
 
 Opis odbiornika
 -------------------
 
-Odbiornik wysyła prosby o identyfikację i odbiera odpowiedzi jak zdefiniowano w sformułowaniu zadania.
+Odbiornik wysyła prśsby o identyfikację i odbiera odpowiedzi jak zdefiniowano w sformułowaniu zadania, nasłuchuje również na tym porcie, z którego prosi o retransmisje, pakietów informujących o niemożności retransmisji.
 
-Bufor odbiornika zawiera dane przesłane w pakietach i dane zawarte w ich nagłówkach w osobnej strukturze danych.
-Długością bufora nazwiemy sufit(BSIZE/PSZIE).
-Bufor przechowuje pakiety poczynając od pewnego numeru sekwencyjnego fseqno do większego numeru sekwencyjnego lseqno < fseqno + długość bufora, wraz z lukami (jeśli pakiet o danym numerze sekwencyjnym jeszcze nie przyszedł jego numer sekwencyjny należy do przedziału domkniętego [fseqno, lseqno], to pod tym numerem w buforze znajduje sie luka).
-Wartości fseqno i lseqno oznaczaja odpowiednio pierwszy (porządek na numerach sekwencyjnych) pakiet w buforze i ostatni pakiet jaki został odebrany.
-Bufor jest wstepnie (po uruchomieniu lub zmianie stacji) niezainicjowany, przed uzyciem bufora nalerzy go zainicjowac, co oznacza ustalenie fseqno.
-Spójnym prefiksem bufora nazwiemy ciąg pakietów o rosnących numerach sekwencyjnych począwszy od fseqno, takich że wszystkie znajdują się w buforze (nie ma w na miejscach w buforze luk).
+Bufor odbiornika składa się z wpisów, wpisem może być odebrany pakiet, luka (pakiet, który został oznaczony do retransmisji), martwy pakiet (pakiet, o którego retransmisję nie będziemy już prosić), miejsce wolne (może stać się jednym z powyższych).
+Miejscami wolnymi sa wszystkie wpisy po ostatnim (porządek na pakietach indukowany z porządku na numerach sekwencyjnych) odebranym pakiecie (jeśli nie ma odebranego pakietu, to cały bufor składa się z wolnych miejsc).
+Długością bufora jest sufit(BSIZE/PSZIE).
+Bufor przechowuje wpisy dla numerów sekwencyjnych od fseqno do lseqno = fseqno + długość bufora - 1.
+Poprawnym prefiksem nazwiemy ciąg odebranych pakietów w buforze o kolejnych numerach sekwencyjnych począwszy od fseqno.
+Początkowo (i po każdej zmianie stacji) bufor jest niezainicjowany, nie ma określonego fseqno, nie można wtedy wykonywać na nim żadnych operacji poza inicjalizacją (ustaleniem fseqno).
 
-Gdzy przychodzi nowy pakiet, odbiornik wykonuje:
-- jeslli lseqno bufora jest mniejsze od numeru sekwencyjnego nowego pakietu o więcej niż dwie długości bufora to czyni bufor niezainicjowanym
-- jesli bufor jest niezainicjowany to inicjuje bufor i wstawia do niego nowy pakiet alktualizując lseqno
-- wszystkie pakiety o numerach sekwencyjnych pomiędzy fseqno i lseqno, które jeszcze nie przyszły zaznacza jako luki i zaznacza jako do retransmisji ustalając opóźnienie retransmisji na 1 jednostkę (patrz dalej) i liczbę retransmisji na 8.
-- jeśli zajduje się spójny prefiks o długości co najmniej 75% długości bufora to opróżnia pierwsze (długość najdłuższego spójnego prefiksu)-pakietów bufora na standardowe wyjście 
-- jeśli lseqno-fseqno >= długość bufora - 1, to usuwamy z bufora pakiety (od początku, a więc numeru sekwencyjnego fseqno) aż do pierwszego pakietu (nie luki) po pierwszej luce w buforze.
+Parametry luki:
+- liczba retransmisji - ile razy można jeszcze prosić o retransmisję, jeśli równe zero to już nie można prosić o retransmisję pakietu (który znalazłby się pod tym wpisem)
+- opóźnienie retransmisji - ile razy RTIME trzeba jeszcze czekać, aby poprosić o retransmisję (w obecnej implementacji rozdzielczość pomiaru czasu to RTIME)
 
-Co RTIME odbiornik przegląda bufor w poszukiwaniu luk i dla każdej luki, jeśli znajduje się w pierwszej polowie bufora i jeśli odebrał już pakiet o mniejszym oraz wiekszym numerze sekwencyjnym to:
+Przejścia pomiędzy rodzajami wpisów:
+- wolne miejsce >>== oznaczenie do retransmisji ==>> luka
+	- ustawia opóźnienie retransmisji na 1
+	- ustawia liczbę retransmisji na 8
+- luka >>== prośba o retransmisję ==>> luka
+	- zmniejszenie liczby retransmisji o 1
+	- ustawienie opóźnienia retransmisji na 2
+- wolne miejsce, luka >>= odebranie pakietu ==>> odebrany pakiet
+- luka >>== odebranie informacji (pakietu) o niemożności retransmisji ==>> martwy pakiet
+- luka >>== liczba retransmisji i opóźnienie retransmisji równe zero ==>> martwy pakiet
 
-% TODO to co w rtime_cb
+Gdy przychodzi nowy pakiet (z aktualnie ustawionej stacji) o numerze sekwencyjnym seqno:
+- jeśli seqno-lseqno >  2 * długośc bufora to bufor staje się niezainicjowany
+- jeśli bufor jest niezainicjowany to inicjuje bufor aktualnym seqno
+- jeśli seqno > fseqno, to z bufora jest usuwanych pierwszych seqno - fseqno pakietów
+- wstawia do bufora nowy odebrany pakiet (o numerze sekwencyjnym seqno)
+- wszystkie wpisy w buforze o numerach sekwencyjnych < seqno, które są miejscami wolnymi stają się lukami (oznaczone do retransmisji)
+- jeśli w buforze jest poprawny prefiks o długości co najmniej 75% długości bufora to opróżnia pierwsze (długość najdłuższego spójnego prefiksu)-pakietów bufora na standardowe wyjście 
 
-% TODO opróżnianie bufora
+Co RTIME odbiornik:
+- przegląda bufor w poszukiwaniu ostatniego martwego pakietu i usuwa wszystkie pakiety o mniejszym lub równym numerze sekwencyjnym
+- dekrememntuje opóźnienie retransmisji dla każdej luki w buforze o dodatnim opóźnieniu retransmisji (luki, które spełniają)
+- dla każdej luki, jeśli znajduje się w pierwszej połowie bufora i jeśli opóźnienie retransmisji jest równe zero i liczba retransmisji większa od zera to:
+	- wysyła prośbę o retransmisje tego pakietu
+	- zmienia rodzaj wpisu luka >>==>> luka (aktualizacja liczby i opóźnienia retransmisji)
+

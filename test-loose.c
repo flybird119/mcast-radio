@@ -25,8 +25,14 @@ void loose_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(arg);
 
 	int seqno, times;
-	scanf("%d %d\n", &seqno, &times);
-	loose_add(seqno, times);
+
+	fscanf(stdin, "%d %d", &seqno, &times);
+	getchar();
+	if (feof(stdin)) {
+		event_free(loose_evt);
+	} else {
+		loose_add(seqno, times);
+	}
 }
 
 void loose_init(struct event_base *base) {

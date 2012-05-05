@@ -4,6 +4,8 @@
 
 #include "proto.h"
 
+_Static_assert(sizeof(union proto_addr) == PROTO_ADDR_SZ, "union proto_addr size invalid");
+
 /* NOTE: version has one byte so it's byte order agnostic */
 void header_init(struct proto_header *header, seqno_t seqno, len_t len, flags_t flags) {
 	header->seqno = htonl(seqno);

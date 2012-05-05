@@ -17,10 +17,10 @@
 #define RTIME 250
 
 #define MCAST_TTL 4
-#define MCAST_LOOPBACK 1 // TODO for local testing
+#define MCAST_LOOPBACK 1 // for local testing
 
 /* global debug flag */
-#define DEBUG_FLAG
+//#define DEBUG_FLAG
 
 #include <stdarg.h>
 

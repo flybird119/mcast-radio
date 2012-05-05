@@ -39,8 +39,6 @@ union proto_addr {
 	uint8_t __padding[PROTO_ADDR_SZ];
 }__attribute__((packed));
 
-_Static_assert(sizeof(union proto_addr) == PROTO_ADDR_SZ, "union proto_addr size invalid");
-
 struct proto_ident {
 	struct proto_header header;
 	/* data */
