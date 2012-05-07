@@ -118,17 +118,28 @@ int recvbuff_update_consistient(struct recvbuff *rbuff) {
 
 void recvbuff_flush(struct recvbuff *rbuff, const int fd, int pcount) {
 	/* prevent stupid overflows */
-	if (pcount > rbuff->capacity)
-		pcount = rbuff->capacity;
+	ASSERT(rbuff->capacity >= rbuff->end);
+	if (pcount > rbuff->end)
+		pcount = rbuff->end;
 
 	int i;
 	/* write pcount packets from beginning of the buffer to file descriptor fd */
 	if (fd >= 0) {
-		for (i = 0; i < pcount; ++i) {
-			struct packet_desc *d = recvbuff_map_get(rbuff, i);
+		i = 0;
+		while (i < pcount) {
 			uint8_t *data = recvbuff_buf_get(rbuff, i);
+
+			ssize_t length = 0;
+			for (; i < pcount; ++i) {
+				struct packet_desc *d = recvbuff_map_get(rbuff, i);
+				length += d->length;
+				if (d->length < rbuff->psize) {
+					++i;
+					break;
+				}
+			}
 			/* write */
-			TRY_SYS(write(fd, data, d->length) == (int) d->length);
+			TRY_SYS(write(fd, data, length) == (int) length);
 		}
 	}
 	/* determine how many packets left in buffer */
