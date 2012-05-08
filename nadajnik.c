@@ -19,38 +19,38 @@
 #define MAX_PENDING_RET 1<<16
 
 /* transmitter configuration */
-char mcast_dotted[ADDR_LEN] = "";
-in_port_t data_port = DATA_PORT;
-in_port_t ctrl_port = CTRL_PORT;
-int psize = PSIZE;
-int fsize = FSIZE;
-int rtime = RTIME;
-char name[NAME_LEN] = "Nienazwany Nadajnik";
+static char mcast_dotted[ADDR_LEN] = "";
+static in_port_t data_port = DATA_PORT;
+static in_port_t ctrl_port = CTRL_PORT;
+static int psize = PSIZE;
+static int fsize = FSIZE;
+static int rtime = RTIME;
+static char name[NAME_LEN] = "Nienazwany Nadajnik";
 
-struct proto_ident pack_my_ident;
-struct proto_packet pack_ret_failed;
+static struct proto_ident pack_my_ident;
+static struct proto_packet pack_ret_failed;
 
 /* sockets */
-struct sockaddr_in mcast_addr;
+static struct sockaddr_in mcast_addr;
 
-int mcast_sock;
-int ctrl_sock;
+static int mcast_sock;
+static int ctrl_sock;
 
 /* events */
-struct event_base *base;
+static struct event_base *base;
 
-struct event *stdin_evt;
-struct event *ctrl_evt;
-struct event *rtime_evt;
+static struct event *stdin_evt;
+static struct event *ctrl_evt;
+static struct event *rtime_evt;
 
 /* transmitter state */
-seqno_t last_seqno = 0;
+static seqno_t last_seqno = 0;
 
 /* retransmit requests */
 /* if packet in buffer needs to be retransmitted its PROTO_DORETR flag is set */
 
 /* buffered packets */
-struct sendbuff packets;
+static struct sendbuff packets;
 
 /* callbacks */
 void stdin_cb(evutil_socket_t sock, short ev, void *arg) {

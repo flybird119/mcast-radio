@@ -37,41 +37,41 @@
 #define SEQNO_LAG_THRESH 1
 
 /* receiver configuration */
-char discover_dotted[ADDR_LEN] = DISCOVER_ADDR;
-in_port_t data_port = DATA_PORT;
-in_port_t ctrl_port = CTRL_PORT;
-int ui_port = UI_PORT;
-int bsize = BSIZE;
-int rtime = RTIME;
-char dest_tune_name[NAME_LEN] = "";
+static char discover_dotted[ADDR_LEN] = DISCOVER_ADDR;
+static in_port_t data_port = DATA_PORT;
+static in_port_t ctrl_port = CTRL_PORT;
+static int ui_port = UI_PORT;
+static int bsize = BSIZE;
+static int rtime = RTIME;
+static char dest_tune_name[NAME_LEN] = "";
 
 /* sockets */
-struct sockaddr_in discover_addr;
-struct sockaddr_in ui_addr;
+static struct sockaddr_in discover_addr;
+static struct sockaddr_in ui_addr;
 
-int ctrl_sock;
-int mcast_sock;
+static int ctrl_sock;
+static int mcast_sock;
 
-struct ip_mreq current_membership;
+static struct ip_mreq current_membership;
 
 /* events */
-struct event_base *base;
+static struct event_base *base;
 
-struct event *rtime_evt;
-struct event *discover_timeout_evt;
-struct event *ctrl_recv_evt;
-struct event *refresh_ui_evt;
-struct event *mcast_recv_evt;
+static struct event *rtime_evt;
+static struct event *discover_timeout_evt;
+static struct event *ctrl_recv_evt;
+static struct event *refresh_ui_evt;
+static struct event *mcast_recv_evt;
 
-struct evconnlistener *ui_listener;
+static struct evconnlistener *ui_listener;
 
 /* received data buffer */
-struct recvbuff packets;
+static struct recvbuff packets;
 
 /* stations */
-struct stations_list stations;
+static struct stations_list stations;
 
-void current_station_connect(struct stations_list *list) {
+static void current_station_connect(struct stations_list *list) {
 	struct station_desc* st = stations_list_current(list);
 
 	if (st->expiry_ticks) {
@@ -101,10 +101,10 @@ void current_station_connect(struct stations_list *list) {
 }
 
 /* ui clients */
-struct clients_list ui_clients;
+static struct clients_list ui_clients;
 
 /* callbacks */
-void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
+static void mcast_recv_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 	UNUSED(arg);
 
@@ -351,6 +351,7 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 	UNUSED(arg);
 
+	/* telnet command for clearing client's screen */
 	static unsigned char cls_comm[] = {0x1b, '[', '2', 'J'};
 
 	static char rendbuf[16192];
@@ -372,8 +373,12 @@ void refresh_ui_cb(evutil_socket_t sock, short ev, void *arg) {
 void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
 	UNUSED(ev);
 
+	/* telnet client's response if changed to character mode */
+	/* telnet command: IAC DO ECHO */
 	static const uint8_t ready1[] = {255, 253, 1};
+	/* telnet command: IAC DO SUPPRESS-GO-AHEAD */
 	static const uint8_t ready2[] = {255, 253, 3};
+	/* telnet key up and key down commands */
 	static const uint8_t key_up[] = {27, 91, 65};
 	static const uint8_t key_down[] = {27, 91, 66};
 	static uint8_t comm[3];
@@ -385,6 +390,7 @@ void ui_client_action_cb(evutil_socket_t sock, short ev, void *arg) {
 	TRY_SYS(r = read(sock, &comm, sizeof(comm)));
 	if (r) {
 		if (client_isready(cl)) {
+			/* checks if client changed to charcter mode */
 			if (memcmp(key_down, comm, SIZEOF(comm)) == 0) {
 				if (next_station(&stations)) {
 					current_station_connect(&stations);
@@ -437,6 +443,7 @@ void ui_new_client_cb(struct evconnlistener *listener, evutil_socket_t sock,
 	}
 
 	/* force character mode */
+	/* telnet commands: IAC WILL ECHO   IAC WILL SUPPRESS-GO-AHEAD   IAC WON'T LINEMODE */
 	static unsigned char comms[] = {255, 251, 1, 255, 251, 3, 255, 252, 34};
 	EXPECT(write(sock, comms, SIZEOF(comms)) == SIZEOF(comms),
 			"Setting character mode of remote terminal failed.");
