@@ -193,6 +193,8 @@ int main(int argc, char **argv) {
 				break;
 		}
 	}
+	if (strlen(mcast_dotted) == 0)
+		errflg++;
 
 	if (errflg) {
 		fprintf(stderr, "Error parsing parameters.\n");
